@@ -73,7 +73,9 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 3
+DATA_CACHE_VERSION = 4
+ALL_TEAMS_LABEL = "Todos os times"
+ALL_POSITIONS_LABEL = "Todas as posições"
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
 DATASET_FILES = (
@@ -1651,91 +1653,71 @@ def _is_prog_wyscout_row(row) -> bool:
     return is_progressive_wyscout(row.x_start, row.y_start, row.x_end, row.y_end)
 
 
-# ── STATS ────────────────────────────────────────────────────
-def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
-    """Player stats for a heuristic xT variant (default: primary model)."""
-    passes = df[df["category"] == "passes"]
-    carries = df[df["category"] == "ball-carries"]
+def _empty_pass_layer_metrics() -> dict:
     empty_cls = {"successful": 0, "attempted": 0, "accuracy_pct": 0.0}
-    cols = _xt_column_set(variant or XT_PRIMARY_VARIANT)
-    delta_col, end_col = cols["delta"], cols["end"]
-
-    total_passes = len(passes)
-    completed_passes = passes[passes["is_success"]] if total_passes else passes.iloc[0:0]
-    carries_total = len(carries)
-
-    general = {
-        "passes_total": total_passes,
-        "passes_completed": int(len(completed_passes)),
-        "passes_accuracy_pct": round(len(completed_passes) / total_passes * 100.0, 1) if total_passes else 0.0,
-        "key_passes": int(passes["is_key_pass"].sum()) if total_passes else 0,
-        "crosses": _count_action(passes, "cross"),
-        "long_balls": int(passes["is_long_ball"].sum()) if total_passes else 0,
-        "carries_total": carries_total,
-        "dribbles": int((df["category"] == "dribbles").sum()),
-        "tackles": _count_action(df, "tackle"),
-        "tackles_won": None,
-        "interceptions": _count_action(df, "interception"),
-        "clearances": _count_action(df, "clearance"),
-        "ball_recoveries": _count_action(df, "ball-recovery"),
-        "blocks": _count_action(df, "block"),
-        "defensive_total": int((df["category"] == "defensive").sum()),
-        "shots": None,
-        "xg": None,
-        "assists": None,
-        "xa": None,
-        "total_actions": len(df),
+    return {
+        "passes_total": 0,
+        "passes_completed": 0,
+        "passes_accuracy_pct": 0.0,
+        "key_passes": 0,
+        "crosses": 0,
+        "long_balls": 0,
+        "progressive_wyscout": empty_cls.copy(),
+        "impact_pass": empty_cls.copy(),
+        "high_impact_pass": empty_cls.copy(),
+        "progressive_passes": 0,
+        "progressive_attempted": 0,
+        "progressive_accuracy_pct": 0.0,
+        "impact_passes": 0,
+        "impact_attempted": 0,
+        "impact_accuracy_pct": 0.0,
+        "high_impact_passes": 0,
+        "high_impact_attempted": 0,
+        "high_impact_accuracy_pct": 0.0,
+        "sum_dxt_passes": 0.0,
+        "sum_dxt_passes_offensive": 0.0,
+        "sum_xt_end_passes": 0.0,
+        "sum_xt_end_final_third": 0.0,
+        "sum_xt_end_long_balls": 0.0,
+        "sum_xt_end_top10_passes": 0.0,
+        "sum_xt_end_key_passes": 0.0,
+        "sum_xt_end_impact_passes": 0.0,
+        "pos_pct": 0.0,
+        "xt_per_pass": 0.0,
+        "dxt_per_pass": 0.0,
+        "xt_per_pass_final_third": 0.0,
+        "xt_per_prog_pass": 0.0,
+        "xt_per_impact_pass": 0.0,
+        "xt_per_long_ball": 0.0,
+        "construction_passes": 0,
+        "aggression_passes": 0,
+        "progressive_passes_construction": 0,
+        "progressive_passes_aggression": 0,
+        "impact_passes_construction": 0,
+        "impact_passes_aggression": 0,
+        "high_impact_passes_construction": 0,
+        "high_impact_passes_aggression": 0,
+        "sum_dxt_construction": 0.0,
+        "sum_dxt_aggression": 0.0,
+        "sum_xt_end_construction": 0.0,
+        "sum_xt_end_aggression": 0.0,
+        "dxt_per_construction_pass": 0.0,
+        "dxt_per_aggression_pass": 0.0,
+        "construction_share_pct": 0.0,
     }
 
-    if total_passes == 0:
-        return {
-            **general,
-            "accuracy_pct": 0.0,
-            "progressive_wyscout": empty_cls.copy(),
-            "impact_pass": empty_cls.copy(),
-            "high_impact_pass": empty_cls.copy(),
-            "impact_carry": empty_cls.copy(),
-            "high_impact_carry": empty_cls.copy(),
-            "sum_dxt_passes": 0.0,
-            "sum_dxt_passes_offensive": 0.0,
-            "sum_dxt_carries": 0.0,
-            "sum_xt_end_passes": 0.0,
-            "sum_xt_end_final_third": 0.0,
-            "sum_xt_end_long_balls": 0.0,
-            "sum_xt_end_top10_passes": 0.0,
-            "sum_xt_end_key_passes": 0.0,
-            "sum_xt_end_impact_passes": 0.0,
-            "pos_pct": 0.0,
-            "xt_per_pass": 0.0,
-            "dxt_per_pass": 0.0,
-            "xt_per_pass_final_third": 0.0,
-            "xt_per_prog_pass": 0.0,
-            "xt_per_impact_pass": 0.0,
-            "xt_per_long_ball": 0.0,
-            "construction_passes": 0,
-            "aggression_passes": 0,
-            "progressive_passes_construction": 0,
-            "progressive_passes_aggression": 0,
-            "impact_passes_construction": 0,
-            "impact_passes_aggression": 0,
-            "high_impact_passes_construction": 0,
-            "high_impact_passes_aggression": 0,
-            "sum_dxt_construction": 0.0,
-            "sum_dxt_aggression": 0.0,
-            "sum_xt_end_construction": 0.0,
-            "sum_xt_end_aggression": 0.0,
-            "dxt_per_construction_pass": 0.0,
-            "dxt_per_aggression_pass": 0.0,
-            "construction_share_pct": 0.0,
-            "by_action_type": df.groupby("action_type").size().to_dict() if not df.empty else {},
-        }
 
-    successful = int(passes["is_success"].sum())
-    accuracy = successful / total_passes * 100.0
+def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
+    """Flat pass metrics for any pass subset (todos os passes ou longos SofaScore)."""
+    if passes.empty:
+        return _empty_pass_layer_metrics()
+
+    delta_col, end_col = cols["delta"], cols["end"]
+    completed_passes = passes[passes["is_success"]]
+    total_passes = len(passes)
+
     progressive_wyscout = classification_accuracy(
-        passes,
-        "progressive",
-        _is_prog_wyscout_row,
+        passes, "progressive", _is_prog_wyscout_row,
     )
     impact_pass = classification_accuracy_fn(
         passes,
@@ -1747,40 +1729,29 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         lambda r: is_high_impact_pass_attempt(r, cols),
         lambda r: bool(r.is_won and is_high_impact_pass_attempt(r, cols)),
     )
-    impact_carry = classification_accuracy_fn(
-        carries,
-        lambda r: is_impact_attempt(r, cols),
-        lambda r: bool(r.is_won and is_impact_attempt(r, cols)),
-    )
-    high_impact_carry = classification_accuracy_fn(
-        carries,
-        lambda r: is_high_impact_attempt(r, cols),
-        lambda r: bool(r.is_won and is_high_impact_attempt(r, cols)),
-    )
 
-    xt_actions = df[df["category"].isin(["passes", "ball-carries"]) & df["has_end"]]
-    pos_count = int((xt_actions[delta_col] > 0).sum())
-    pos_pct = (pos_count / len(xt_actions) * 100.0) if len(xt_actions) else 0.0
+    xt_passes = passes[passes["has_end"]]
+    pos_count = int((xt_passes[delta_col] > 0).sum()) if not xt_passes.empty else 0
+    pos_pct = (pos_count / len(xt_passes) * 100.0) if len(xt_passes) else 0.0
 
     sum_dxt_passes = float(passes[delta_col].sum())
     offensive_passes = passes[passes["x_start"] >= HALF_LINE_X]
     sum_dxt_passes_offensive = (
         float(offensive_passes[delta_col].sum()) if not offensive_passes.empty else 0.0
     )
-    sum_dxt_carries = float(carries[delta_col].sum())
     sum_xt_end_passes = float(completed_passes[end_col].sum()) if not completed_passes.empty else 0.0
+
     completed_long_balls = completed_passes[completed_passes["is_long_ball"]]
     sum_xt_end_long_balls = (
         float(completed_long_balls[end_col].sum()) if not completed_long_balls.empty else 0.0
     )
 
-    final_third_won = df[
-        df["category"].isin(["passes", "ball-carries"])
-        & df["has_end"]
-        & df["is_won"]
-        & (df["x_end"] >= FINAL_THIRD_LINE_X)
+    final_third_won = passes[
+        passes["has_end"] & passes["is_won"] & (passes["x_end"] >= FINAL_THIRD_LINE_X)
     ]
-    sum_xt_end_final_third = float(final_third_won[end_col].sum()) if not final_third_won.empty else 0.0
+    sum_xt_end_final_third = (
+        float(final_third_won[end_col].sum()) if not final_third_won.empty else 0.0
+    )
 
     prog_success_mask = passes.apply(
         lambda r: bool(r.is_success and _is_prog_wyscout_row(r)), axis=1
@@ -1823,23 +1794,33 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
     aggression_success_count = aggression_zone["passes"]
 
     return {
-        **general,
-        "accuracy_pct": accuracy,
+        "passes_total": total_passes,
+        "passes_completed": int(len(completed_passes)),
+        "passes_accuracy_pct": round(len(completed_passes) / total_passes * 100.0, 1),
+        "key_passes": int(passes["is_key_pass"].sum()),
+        "crosses": _count_action(passes, "cross"),
+        "long_balls": int(passes["is_long_ball"].sum()),
         "progressive_wyscout": progressive_wyscout,
         "impact_pass": impact_pass,
         "high_impact_pass": high_impact_pass,
-        "impact_carry": impact_carry,
-        "high_impact_carry": high_impact_carry,
+        "progressive_passes": int(progressive_wyscout["successful"]),
+        "progressive_attempted": int(progressive_wyscout["attempted"]),
+        "progressive_accuracy_pct": progressive_wyscout["accuracy_pct"],
+        "impact_passes": int(impact_pass["successful"]),
+        "impact_attempted": int(impact_pass["attempted"]),
+        "impact_accuracy_pct": impact_pass["accuracy_pct"],
+        "high_impact_passes": int(high_impact_pass["successful"]),
+        "high_impact_attempted": int(high_impact_pass["attempted"]),
+        "high_impact_accuracy_pct": high_impact_pass["accuracy_pct"],
         "sum_dxt_passes": sum_dxt_passes,
         "sum_dxt_passes_offensive": sum_dxt_passes_offensive,
-        "sum_dxt_carries": sum_dxt_carries,
         "sum_xt_end_passes": sum_xt_end_passes,
         "sum_xt_end_final_third": sum_xt_end_final_third,
         "sum_xt_end_long_balls": sum_xt_end_long_balls,
         "sum_xt_end_top10_passes": sum_xt_end_top10_passes,
         "sum_xt_end_key_passes": sum_xt_end_key_passes,
         "sum_xt_end_impact_passes": sum_xt_end_impact_passes,
-        "pos_pct": pos_pct,
+        "pos_pct": round(pos_pct, 1),
         "xt_per_pass": _safe_ratio(sum_xt_end_passes, len(completed_passes)),
         "dxt_per_pass": _safe_ratio(sum_dxt_passes, len(completed_passes)),
         "xt_per_pass_final_third": _safe_ratio(sum_xt_end_passes_final_third, len(completed_ft)),
@@ -1869,6 +1850,75 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         )
         if len(completed_passes)
         else 0.0,
+    }
+
+
+def _prefix_metric_keys(metrics: dict, prefix: str) -> dict:
+    nested_keys = {"progressive_wyscout", "impact_pass", "high_impact_pass"}
+    out: dict = {}
+    for key, value in metrics.items():
+        if key in nested_keys:
+            continue
+        out[f"{prefix}{key}"] = value
+    return out
+
+
+# ── STATS ────────────────────────────────────────────────────
+def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
+    """Player stats for a heuristic xT variant (default: primary model)."""
+    passes = df[df["category"] == "passes"]
+    carries = df[df["category"] == "ball-carries"]
+    empty_cls = {"successful": 0, "attempted": 0, "accuracy_pct": 0.0}
+    cols = _xt_column_set(variant or XT_PRIMARY_VARIANT)
+
+    impact_carry = classification_accuracy_fn(
+        carries,
+        lambda r: is_impact_attempt(r, cols),
+        lambda r: bool(r.is_won and is_impact_attempt(r, cols)),
+    )
+    high_impact_carry = classification_accuracy_fn(
+        carries,
+        lambda r: is_high_impact_attempt(r, cols),
+        lambda r: bool(r.is_won and is_high_impact_attempt(r, cols)),
+    )
+
+    all_layer = _pass_layer_metrics(passes, cols)
+    long_passes = passes[passes["is_long_ball"].astype(bool)]
+    long_layer = _prefix_metric_keys(_pass_layer_metrics(long_passes, cols), "long_")
+
+    if passes.empty:
+        return {
+            **all_layer,
+            **long_layer,
+            "carries_total": len(carries),
+            "dribbles": int((df["category"] == "dribbles").sum()),
+            "total_actions": len(df),
+            "impact_carry": impact_carry,
+            "high_impact_carry": high_impact_carry,
+            "sum_dxt_carries": 0.0,
+            "accuracy_pct": 0.0,
+            "by_action_type": df.groupby("action_type").size().to_dict() if not df.empty else {},
+        }
+
+    delta_col = cols["delta"]
+    sum_dxt_carries = float(carries[delta_col].sum()) if not carries.empty else 0.0
+
+    return {
+        **all_layer,
+        **long_layer,
+        "carries_total": len(carries),
+        "dribbles": int((df["category"] == "dribbles").sum()),
+        "tackles": _count_action(df, "tackle"),
+        "interceptions": _count_action(df, "interception"),
+        "clearances": _count_action(df, "clearance"),
+        "ball_recoveries": _count_action(df, "ball-recovery"),
+        "blocks": _count_action(df, "block"),
+        "defensive_total": int((df["category"] == "defensive").sum()),
+        "total_actions": len(df),
+        "accuracy_pct": all_layer["passes_accuracy_pct"],
+        "impact_carry": impact_carry,
+        "high_impact_carry": high_impact_carry,
+        "sum_dxt_carries": sum_dxt_carries,
         "by_action_type": df.groupby("action_type").size().to_dict(),
     }
 
@@ -2383,6 +2433,62 @@ def _players_have_sofa_stats(players: list[dict]) -> bool:
     return any(p.get("xg") is not None or p.get("defensive_total") is not None for p in players)
 
 
+def _stats_to_rankable_metrics(stats: dict) -> dict:
+    """Extract numeric flat metrics from compute_player_stats for ranking."""
+    skip = {
+        "progressive_wyscout", "impact_pass", "high_impact_pass",
+        "impact_carry", "high_impact_carry", "by_action_type",
+    }
+    out: dict = {}
+    for key, value in stats.items():
+        if key in skip or isinstance(value, dict):
+            continue
+        if isinstance(value, (int, float)):
+            if isinstance(value, float):
+                out[key] = round(value, 4) if abs(value) < 1000 else round(value, 3)
+            else:
+                out[key] = value
+    return out
+
+
+PLAYER_RANKABLE_METRIC_KEYS: tuple[str, ...] = (
+    "passes_total", "passes_completed", "passes_accuracy_pct", "key_passes", "crosses", "long_balls",
+    "progressive_passes", "progressive_attempted", "progressive_accuracy_pct",
+    "impact_passes", "impact_attempted", "impact_accuracy_pct",
+    "high_impact_passes", "high_impact_attempted", "high_impact_accuracy_pct",
+    "sum_dxt_passes", "sum_dxt_passes_offensive", "sum_xt_end_passes",
+    "sum_xt_end_final_third", "sum_xt_end_long_balls", "sum_xt_end_top10_passes",
+    "sum_xt_end_key_passes", "sum_xt_end_impact_passes",
+    "pos_pct", "xt_per_pass", "dxt_per_pass", "xt_per_pass_final_third",
+    "xt_per_prog_pass", "xt_per_impact_pass", "xt_per_long_ball",
+    "construction_passes", "aggression_passes", "construction_share_pct",
+    "progressive_passes_construction", "progressive_passes_aggression",
+    "impact_passes_construction", "impact_passes_aggression",
+    "high_impact_passes_construction", "high_impact_passes_aggression",
+    "sum_dxt_construction", "sum_dxt_aggression",
+    "sum_xt_end_construction", "sum_xt_end_aggression",
+    "dxt_per_construction_pass", "dxt_per_aggression_pass",
+    "long_passes_total", "long_passes_completed", "long_passes_accuracy_pct",
+    "long_key_passes", "long_crosses", "long_long_balls",
+    "long_progressive_passes", "long_progressive_attempted", "long_progressive_accuracy_pct",
+    "long_impact_passes", "long_impact_attempted", "long_impact_accuracy_pct",
+    "long_high_impact_passes", "long_high_impact_attempted", "long_high_impact_accuracy_pct",
+    "long_sum_dxt_passes", "long_sum_dxt_passes_offensive", "long_sum_xt_end_passes",
+    "long_sum_xt_end_final_third", "long_sum_xt_end_long_balls", "long_sum_xt_end_top10_passes",
+    "long_sum_xt_end_key_passes", "long_sum_xt_end_impact_passes",
+    "long_pos_pct", "long_xt_per_pass", "long_dxt_per_pass", "long_xt_per_pass_final_third",
+    "long_xt_per_prog_pass", "long_xt_per_impact_pass", "long_xt_per_long_ball",
+    "long_construction_passes", "long_aggression_passes", "long_construction_share_pct",
+    "long_progressive_passes_construction", "long_progressive_passes_aggression",
+    "long_impact_passes_construction", "long_impact_passes_aggression",
+    "long_high_impact_passes_construction", "long_high_impact_passes_aggression",
+    "long_sum_dxt_construction", "long_sum_dxt_aggression",
+    "long_sum_xt_end_construction", "long_sum_xt_end_aggression",
+    "long_dxt_per_construction_pass", "long_dxt_per_aggression_pass",
+    "minutes", "pass_value",
+)
+
+
 def _pass_player_metrics(
     player_data: dict[str, pd.DataFrame],
     player: dict,
@@ -2399,7 +2505,7 @@ def _pass_player_metrics(
         box_stats or {},
     )
     mins = (minutes_info or {}).get(player["code"], {})
-    return {
+    metrics = {
         "player_id": player["code"],
         "player_name": player["name"],
         "position": player.get("position", "—"),
@@ -2408,36 +2514,39 @@ def _pass_player_metrics(
         "minutes": mins.get("minutes"),
         "minutes_pct": mins.get("minutes_pct"),
         "eligible_ranking": bool(mins.get("eligible_ranking")),
-        "sum_dxt_passes": round(stats["sum_dxt_passes"], 3),
-        "sum_xt_end_passes": round(stats["sum_xt_end_passes"], 3),
-        "progressive_passes": int(stats["progressive_wyscout"]["successful"]),
-        "impact_passes": int(stats["impact_pass"]["successful"]),
-        "high_impact_passes": int(stats["high_impact_pass"]["successful"]),
-        "passes_total": int(stats["passes_total"]),
-        "passes_completed": int(stats["passes_completed"]),
-        "passes_accuracy_pct": stats["passes_accuracy_pct"],
-        "key_passes": int(stats["key_passes"]),
-        "long_balls": int(stats["long_balls"]),
-        "crosses": int(stats["crosses"]),
-        "dxt_per_pass": round(stats["dxt_per_pass"], 4),
-        "xt_per_pass": round(stats["xt_per_pass"], 4),
-        "xt_per_impact_pass": round(stats["xt_per_impact_pass"], 4),
-        "pos_pct": round(stats["pos_pct"], 1),
-        "construction_passes": int(stats["construction_passes"]),
-        "aggression_passes": int(stats["aggression_passes"]),
-        "progressive_passes_construction": int(stats["progressive_passes_construction"]),
-        "progressive_passes_aggression": int(stats["progressive_passes_aggression"]),
-        "impact_passes_construction": int(stats["impact_passes_construction"]),
-        "impact_passes_aggression": int(stats["impact_passes_aggression"]),
-        "high_impact_passes_construction": int(stats["high_impact_passes_construction"]),
-        "high_impact_passes_aggression": int(stats["high_impact_passes_aggression"]),
-        "sum_dxt_construction": round(stats["sum_dxt_construction"], 3),
-        "sum_dxt_aggression": round(stats["sum_dxt_aggression"], 3),
-        "sum_xt_end_construction": round(stats["sum_xt_end_construction"], 3),
-        "sum_xt_end_aggression": round(stats["sum_xt_end_aggression"], 3),
-        "dxt_per_construction_pass": round(stats["dxt_per_construction_pass"], 4),
-        "dxt_per_aggression_pass": round(stats["dxt_per_aggression_pass"], 4),
     }
+    metrics.update(_stats_to_rankable_metrics(stats))
+    return metrics
+
+
+def _filter_players_registry(
+    players_registry: list[dict],
+    minutes_info: dict[str, dict],
+    *,
+    teams: list[str] | None = None,
+    positions: list[str] | None = None,
+) -> list[dict]:
+    filtered = players_registry
+    if teams and ALL_TEAMS_LABEL not in teams:
+        team_set = set(teams)
+        filtered = [
+            p for p in filtered
+            if minutes_info.get(p["code"], {}).get("team") in team_set
+        ]
+    if positions and ALL_POSITIONS_LABEL not in positions:
+        pos_set = set(positions)
+        filtered = [p for p in filtered if p.get("position") in pos_set]
+    return filtered
+
+
+def _available_teams(minutes_info: dict[str, dict]) -> list[str]:
+    teams = sorted({str(v["team"]) for v in minutes_info.values() if v.get("team")})
+    return [ALL_TEAMS_LABEL, *teams]
+
+
+def _available_positions(players_registry: list[dict]) -> list[str]:
+    positions = sorted({str(p.get("position")) for p in players_registry if p.get("position")})
+    return [ALL_POSITIONS_LABEL, *positions]
 
 
 def _build_ranking_players(
@@ -2464,50 +2573,24 @@ def _build_ranking_players(
     return players
 
 
-RANKING_METRICS: tuple[tuple[str, str, str], ...] = (
-    ("progressive_passes", "Passes Progressivos (total)", _fmt_count),
-    ("progressive_passes_construction", "Prog. Construção", _fmt_count),
-    ("progressive_passes_aggression", "Prog. Agressão", _fmt_count),
-    ("impact_passes", "Passes Impact (total)", _fmt_count),
-    ("impact_passes_construction", "Impact Construção", _fmt_count),
-    ("impact_passes_aggression", "Impact Agressão", _fmt_count),
-    ("high_impact_passes", "High Impact (total)", _fmt_count),
-    ("high_impact_passes_construction", "High Impact Construção", _fmt_count),
-    ("high_impact_passes_aggression", "High Impact Agressão", _fmt_count),
-    ("construction_passes", "Passes Construção", _fmt_count),
-    ("aggression_passes", "Passes Agressão", _fmt_count),
-    ("sum_dxt_passes", "Σ ΔxT (total)", _fmt_decimal),
-    ("sum_dxt_construction", "Σ ΔxT Construção", _fmt_decimal),
-    ("sum_dxt_aggression", "Σ ΔxT Agressão", _fmt_decimal),
-    ("sum_xt_end_passes", "Σ xT (total)", _fmt_decimal),
-    ("sum_xt_end_construction", "Σ xT Construção", _fmt_decimal),
-    ("sum_xt_end_aggression", "Σ xT Agressão", _fmt_decimal),
-    ("dxt_per_pass", "ΔxT / passe", _fmt_decimal),
-    ("xt_per_pass", "xT / passe", _fmt_decimal),
-    ("dxt_per_construction_pass", "ΔxT / passe construção", _fmt_decimal),
-    ("dxt_per_aggression_pass", "ΔxT / passe agressão", _fmt_decimal),
-    ("key_passes", "Key Passes", _fmt_count),
-    ("passes_accuracy_pct", "% acerto passes", _fmt_pct),
-)
-
-RANKING_METRIC_KEYS: tuple[str, ...] = tuple(m[0] for m in RANKING_METRICS)
-
-
-def _compute_position_ranks(players: list[dict]) -> dict[str, dict[str, int]]:
-    """player_id -> metric_key -> rank (1-based) within position_group."""
-    by_group: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
+def _compute_position_ranks(
+    players: list[dict],
+    metric_keys: tuple[str, ...] | None = None,
+) -> dict[str, dict[str, int]]:
+    """player_id -> metric_key -> rank (1-based) within position code."""
+    keys = metric_keys or PLAYER_RANKABLE_METRIC_KEYS
+    by_position: dict[str, list[dict]] = {}
     for player in players:
-        group = player.get("position_group")
-        if group in by_group:
-            by_group[group].append(player)
+        pos = str(player.get("position") or "—")
+        by_position.setdefault(pos, []).append(player)
 
     ranks: dict[str, dict[str, int]] = {}
-    for group_players in by_group.values():
-        if not group_players:
+    for pos_players in by_position.values():
+        if not pos_players:
             continue
-        for key in RANKING_METRIC_KEYS:
+        for key in keys:
             ordered = sorted(
-                group_players,
+                pos_players,
                 key=lambda p: p.get(key, 0) or 0,
                 reverse=True,
             )
@@ -2515,6 +2598,170 @@ def _compute_position_ranks(players: list[dict]) -> dict[str, dict[str, int]]:
                 pid = player["player_id"]
                 ranks.setdefault(pid, {})[key] = rank
     return ranks
+
+
+def _metric_label(key: str) -> str:
+    return METRIC_LABELS.get(key, key.replace("_", " ").title())
+
+
+METRIC_LABELS: dict[str, str] = {
+    "passes_total": "Passes (total)",
+    "passes_completed": "Passes completados",
+    "passes_accuracy_pct": "% acerto passes",
+    "key_passes": "Key passes",
+    "crosses": "Crosses",
+    "long_balls": "Bolas longas (SofaScore)",
+    "progressive_passes": "Passes progressivos",
+    "progressive_attempted": "Prog. tentados",
+    "progressive_accuracy_pct": "% acerto prog.",
+    "impact_passes": "Passes Impact",
+    "impact_attempted": "Impact tentados",
+    "impact_accuracy_pct": "% acerto Impact",
+    "high_impact_passes": "High Impact",
+    "high_impact_attempted": "High Impact tentados",
+    "high_impact_accuracy_pct": "% acerto High Impact",
+    "sum_dxt_passes": "Σ ΔxT",
+    "sum_dxt_passes_offensive": "Σ ΔxT campo ofensivo",
+    "sum_xt_end_passes": "Σ xT destino",
+    "sum_xt_end_final_third": "Σ xT terço final",
+    "sum_xt_end_long_balls": "Σ xT bolas longas",
+    "sum_xt_end_top10_passes": "Σ xT top 10 passes",
+    "sum_xt_end_key_passes": "Σ xT key passes",
+    "sum_xt_end_impact_passes": "Σ xT impact passes",
+    "pos_pct": "% passes ΔxT+",
+    "xt_per_pass": "xT / passe",
+    "dxt_per_pass": "ΔxT / passe",
+    "xt_per_pass_final_third": "xT / passe terço final",
+    "xt_per_prog_pass": "xT / passe prog.",
+    "xt_per_impact_pass": "xT / impact passe",
+    "xt_per_long_ball": "xT / bola longa",
+    "construction_passes": "Passes Construção",
+    "aggression_passes": "Passes Agressão",
+    "construction_share_pct": "% construção",
+    "progressive_passes_construction": "Prog. Construção",
+    "progressive_passes_aggression": "Prog. Agressão",
+    "impact_passes_construction": "Impact Construção",
+    "impact_passes_aggression": "Impact Agressão",
+    "high_impact_passes_construction": "High Impact Construção",
+    "high_impact_passes_aggression": "High Impact Agressão",
+    "sum_dxt_construction": "Σ ΔxT Construção",
+    "sum_dxt_aggression": "Σ ΔxT Agressão",
+    "sum_xt_end_construction": "Σ xT Construção",
+    "sum_xt_end_aggression": "Σ xT Agressão",
+    "dxt_per_construction_pass": "ΔxT / passe construção",
+    "dxt_per_aggression_pass": "ΔxT / passe agressão",
+    "minutes": "Minutos",
+    "pass_value": "Valor passe (SofaScore)",
+    "long_passes_total": "Longos — passes (total)",
+    "long_passes_completed": "Longos — completados",
+    "long_passes_accuracy_pct": "Longos — % acerto",
+    "long_key_passes": "Longos — key passes",
+    "long_progressive_passes": "Longos — progressivos",
+    "long_impact_passes": "Longos — Impact",
+    "long_high_impact_passes": "Longos — High Impact",
+    "long_sum_dxt_passes": "Longos — Σ ΔxT",
+    "long_sum_xt_end_passes": "Longos — Σ xT",
+    "long_sum_dxt_construction": "Longos — Σ ΔxT Construção",
+    "long_sum_dxt_aggression": "Longos — Σ ΔxT Agressão",
+    "long_sum_xt_end_construction": "Longos — Σ xT Construção",
+    "long_sum_xt_end_aggression": "Longos — Σ xT Agressão",
+    "long_progressive_passes_construction": "Longos — prog. construção",
+    "long_progressive_passes_aggression": "Longos — prog. agressão",
+    "long_impact_passes_construction": "Longos — impact construção",
+    "long_impact_passes_aggression": "Longos — impact agressão",
+    "long_high_impact_passes_construction": "Longos — HI construção",
+    "long_high_impact_passes_aggression": "Longos — HI agressão",
+    "long_dxt_per_pass": "Longos — ΔxT / passe",
+    "long_xt_per_pass": "Longos — xT / passe",
+    "long_pos_pct": "Longos — % ΔxT+",
+}
+
+
+def _fmt_metric_value(key: str, value) -> str:
+    if value is None:
+        return "—"
+    if key.endswith("_pct") or key.endswith("accuracy_pct") or key == "pos_pct":
+        return _fmt_pct(float(value))
+    if isinstance(value, float):
+        decimals = 4 if "per_" in key else 3
+        return _fmt_decimal(value, decimals=decimals)
+    return _fmt_count(value)
+
+
+STATS_CARD_SECTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "Volume · todos os passes",
+        STAT_CARD_GENERAL_COLOR,
+        (
+            "passes_total", "passes_completed", "passes_accuracy_pct", "key_passes",
+            "crosses", "long_balls", "minutes", "pass_value",
+        ),
+    ),
+    (
+        "Progressão & Impact · todos os passes",
+        STAT_CARD_IMPACT_COLOR,
+        (
+            "progressive_passes", "progressive_attempted", "progressive_accuracy_pct",
+            "impact_passes", "impact_attempted", "impact_accuracy_pct",
+            "high_impact_passes", "high_impact_attempted", "high_impact_accuracy_pct",
+            "pos_pct",
+        ),
+    ),
+    (
+        "xT · todos os passes",
+        STAT_CARD_XT_COLOR,
+        (
+            "sum_dxt_passes", "sum_dxt_passes_offensive", "sum_xt_end_passes",
+            "sum_xt_end_final_third", "sum_xt_end_key_passes", "sum_xt_end_impact_passes",
+            "sum_xt_end_top10_passes", "sum_xt_end_long_balls",
+            "dxt_per_pass", "xt_per_pass", "xt_per_prog_pass", "xt_per_impact_pass",
+            "xt_per_pass_final_third", "xt_per_long_ball",
+        ),
+    ),
+    (
+        "Construção vs Agressão · todos os passes",
+        STAT_CARD_ATTACK_COLOR,
+        (
+            "construction_passes", "aggression_passes", "construction_share_pct",
+            "progressive_passes_construction", "progressive_passes_aggression",
+            "impact_passes_construction", "impact_passes_aggression",
+            "high_impact_passes_construction", "high_impact_passes_aggression",
+            "sum_dxt_construction", "sum_dxt_aggression",
+            "sum_xt_end_construction", "sum_xt_end_aggression",
+            "dxt_per_construction_pass", "dxt_per_aggression_pass",
+        ),
+    ),
+    (
+        "Passes longos · SofaScore (isLongBall)",
+        "#a78bfa",
+        (
+            "long_passes_total", "long_passes_completed", "long_passes_accuracy_pct",
+            "long_key_passes", "long_progressive_passes", "long_progressive_attempted",
+            "long_progressive_accuracy_pct", "long_impact_passes", "long_impact_attempted",
+            "long_impact_accuracy_pct", "long_high_impact_passes", "long_high_impact_attempted",
+            "long_high_impact_accuracy_pct", "long_pos_pct",
+            "long_sum_dxt_passes", "long_sum_xt_end_passes", "long_sum_xt_end_final_third",
+            "long_sum_xt_end_key_passes", "long_sum_xt_end_impact_passes",
+            "long_dxt_per_pass", "long_xt_per_pass", "long_xt_per_prog_pass", "long_xt_per_impact_pass",
+            "long_construction_passes", "long_aggression_passes", "long_construction_share_pct",
+            "long_progressive_passes_construction", "long_progressive_passes_aggression",
+            "long_impact_passes_construction", "long_impact_passes_aggression",
+            "long_high_impact_passes_construction", "long_high_impact_passes_aggression",
+            "long_sum_dxt_construction", "long_sum_dxt_aggression",
+            "long_sum_xt_end_construction", "long_sum_xt_end_aggression",
+            "long_dxt_per_construction_pass", "long_dxt_per_aggression_pass",
+        ),
+    ),
+)
+
+
+RANKING_METRICS: tuple[tuple[str, str, object], ...] = tuple(
+    (key, _metric_label(key), (lambda k: lambda v: _fmt_metric_value(k, v))(key))
+    for key in PLAYER_RANKABLE_METRIC_KEYS
+    if key not in ("minutes", "pass_value")
+)
+
+RANKING_METRIC_KEYS: tuple[str, ...] = tuple(m[0] for m in RANKING_METRICS)
 
 
 def _fmt_with_rank(
@@ -2561,21 +2808,16 @@ def _ranking_table(
 def render_ranking_tab(
     player_data: dict[str, pd.DataFrame],
     players_registry: list[dict],
+    *,
+    minutes_info: dict[str, dict],
+    box_stats: dict[str, dict],
 ) -> None:
     """Top pass metrics by position group for players with enough minutes."""
     st.markdown("### Ranking · Passes")
     st.caption(
         f"Jogadores de linha com pelo menos **{int(MIN_MINUTES_PCT * 100)}%** dos minutos "
-        "possíveis do time (SofaScore). Métricas calculadas com o modelo heurístico **v4** "
-        "a partir de `season_all_br.csv`."
+        "possíveis do time. Rankings na aba Análise são por **posição** (CB, CM, …)."
     )
-
-    box_stats = load_player_box_stats()
-    minutes_info = load_player_minutes_info()
-    if not minutes_info:
-        st.warning(
-            "Arquivo `player_match_stats.csv` ausente — não é possível filtrar por minutos."
-        )
 
     players = _build_ranking_players(
         player_data,
@@ -2589,17 +2831,16 @@ def render_ranking_tab(
 
     st.caption(f"{len(players)} jogadores elegíveis · top {RANKING_TOP_N} por métrica e grupo")
 
-    with st.expander("Construção vs Agressão — como classificamos", expanded=False):
+    with st.expander("Camadas de análise", expanded=False):
         st.markdown(
             f"""
-**Passes Construção** — destino nos primeiros **{FIELD_X - PASS_AGGRESSION_DEPTH:.0f} m** \
-(x &lt; {PASS_AGGRESSION_X_MIN:.0f} m). Circulação, progressão e preparação.
+**Todos os passes** — métricas sobre o volume completo de passes com coordenadas.
 
-**Passes Agressão** — destino nos **últimos {PASS_AGGRESSION_DEPTH:.0f} m** do campo \
-(x ≥ {PASS_AGGRESSION_X_MIN:.0f} m até o gol). Entregas na zona de finalização.
+**Construção vs Agressão** — destino fora (x &lt; {PASS_AGGRESSION_X_MIN:.0f} m) ou dentro \
+dos últimos **{PASS_AGGRESSION_DEPTH:.0f} m** (x ≥ {PASS_AGGRESSION_X_MIN:.0f} m).
 
-Progressivos, Impact, High Impact, Σ ΔxT e Σ xT são contados **por zona de destino** \
-do passe completado.
+**Passes longos (SofaScore)** — subsete com flag `isLongBall` no export; \
+todas as métricas são recalculadas só para essa camada.
             """
         )
 
@@ -3538,37 +3779,51 @@ def render_player_stats_cards(
     stats: dict,
     *,
     position_ranks: dict[str, int] | None = None,
-    position_group: str | None = None,
+    position_code: str | None = None,
 ) -> None:
-    """Render pass volume, construction/aggression, impact and xT efficiency cards."""
-    rank_label = f" · ranking no grupo {position_group}" if position_group else ""
+    """Render all pass metric cards with position ranking."""
     if position_ranks:
-        st.caption(f"Valores com **(#N)** = posição no grupo de posição{rank_label}.")
-    row1 = st.columns(2)
-    with row1[0]:
-        render_actions_stats_card(stats, STAT_CARD_GENERAL_COLOR, position_ranks)
-    with row1[1]:
-        render_construction_aggression_card(stats, STAT_CARD_ATTACK_COLOR, position_ranks)
-    row2 = st.columns(2)
-    with row2[0]:
-        render_impact_card(stats, STAT_CARD_IMPACT_COLOR, position_ranks)
-    with row2[1]:
-        render_xt_efficiency_card(stats, STAT_CARD_XT_COLOR, position_ranks)
+        st.caption(
+            f"**(#N)** = posição entre jogadores na mesma posição "
+            f"(**{position_code or '—'}**, elegíveis com ≥{int(MIN_MINUTES_PCT * 100)}% min)."
+        )
+    card_cols = st.columns(2)
+    for idx, (title, color, keys) in enumerate(STATS_CARD_SECTIONS):
+        with card_cols[idx % 2]:
+            items = [
+                (
+                    _metric_label(key),
+                    _fmt_with_rank(
+                        _fmt_metric_value(key, stats.get(key)),
+                        position_ranks,
+                        key,
+                    ),
+                )
+                for key in keys
+            ]
+            stats_section_card(title, color, items)
 
 
 def render_analysis_tab(
     player_data: dict[str, pd.DataFrame],
     players_registry: list[dict],
     *,
-    impact_plays_only: bool = False,
+    minutes_info: dict[str, dict],
+    box_stats: dict[str, dict],
+    rank_pool: list[dict],
 ) -> None:
+    if not players_registry:
+        st.warning("Nenhum jogador para os filtros selecionados.")
+        return
+
     player = _player_selector("analysis_player", players_registry)
-    match_label = ALL_GAMES_LABEL
     df = player_data[player["code"]]
 
+    mins = minutes_info.get(player["code"], {})
+    team = mins.get("team", "—")
     st.markdown(
         f'<div class="player-header">{player["name"]}</div>'
-        f'<div class="player-sub">{player["position"]} · {match_label}</div>',
+        f'<div class="player-sub">{player["position"]} · {team} · {ALL_GAMES_LABEL}</div>',
         unsafe_allow_html=True,
     )
 
@@ -3576,47 +3831,21 @@ def render_analysis_tab(
         st.warning(f"Sem dados para {player['name']}.")
         return
 
-    map_kwargs = {"impact_only": impact_plays_only}
-    label_suffix = " · Impact" if impact_plays_only else ""
-    map_cols = st.columns(2)
-    with map_cols[0]:
-        st.markdown(f'<div class="map-label">Passes{label_suffix}</div>', unsafe_allow_html=True)
-        _show_map(
-            draw_pass_map, df, player["name"], match_label,
-            "Sem passes no recorte.", **map_kwargs,
-        )
-    with map_cols[1]:
-        st.markdown(f'<div class="map-label">Destino dos passes{label_suffix}</div>', unsafe_allow_html=True)
-        _show_map(
-            draw_pass_destination_heatmap, df, player["name"], match_label,
-            "Sem passes com destino no recorte.", **map_kwargs,
-        )
-
-    st.markdown("---")
-    st.markdown("#### Estatísticas de passe")
-    box_stats = load_player_box_stats()
-    minutes_info = load_player_minutes_info()
-    mins = minutes_info.get(player["code"], {})
     mins_label = (
         f"{mins.get('minutes', '—')} min ({mins.get('minutes_pct', 0) * 100:.1f}% do time)"
         if mins else "minutos indisponíveis"
     )
     st.caption(
-        f"**{ALL_GAMES_LABEL.capitalize()}** · xT heurístico **v4** · {mins_label}"
+        f"xT heurístico **v4** · {mins_label} · passes longos = flag **isLongBall** (SofaScore)"
     )
     stats = _merge_box_stats(
         compute_player_stats(df), player["code"], box_stats
     )
-    ranking_pool = _build_ranking_players(
-        player_data, players_registry, box_stats=box_stats, minutes_info=minutes_info
-    )
-    all_ranks = _compute_position_ranks(ranking_pool)
-    player_ranks = all_ranks.get(player["code"])
-    pos_group = position_group(player.get("position"))
+    all_ranks = _compute_position_ranks(rank_pool)
     render_player_stats_cards(
         stats,
-        position_ranks=player_ranks,
-        position_group=pos_group,
+        position_ranks=all_ranks.get(player["code"]),
+        position_code=player.get("position"),
     )
 
 
@@ -4201,7 +4430,7 @@ st.markdown(
     <div style="text-align:center;margin-bottom:1rem;">
       <h1 style="margin:0;color:#eef1f7;">Brasileirão 2026 — Passes</h1>
       <p style="color:#94a3b8;font-size:0.95rem;margin-top:0.35rem;">
-        Mapas de passe · Ranking · xT Heurístico v4
+        Métricas de passe · Ranking · xT Heurístico v4
       </p>
     </div>
     """,
@@ -4220,12 +4449,15 @@ if not players_registry or not any(not df.empty for df in player_data.values()):
     )
     st.stop()
 
+box_stats = load_player_box_stats()
+minutes_info = load_player_minutes_info()
+
 with st.sidebar:
     st.markdown(
         """
         <div style="text-align:center;">
-          <h3 style="margin:0;color:#eef1f7;">Opções</h3>
-          <p style="color:#94a3b8;font-size:0.85rem;">Mapas de passe · temporada</p>
+          <h3 style="margin:0;color:#eef1f7;">Filtros</h3>
+          <p style="color:#94a3b8;font-size:0.85rem;">Time · posição · jogador</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4234,15 +4466,46 @@ with st.sidebar:
         f"{len(players_registry)} jogadores · "
         f"{sum(len(df) for df in player_data.values()):,} passes · xT v4"
     )
+    team_options = _available_teams(minutes_info)
+    position_options = _available_positions(players_registry)
+    selected_teams = st.multiselect(
+        "Time",
+        options=team_options,
+        default=[ALL_TEAMS_LABEL],
+        help="Filtre por time. Mantenha «Todos os times» para ver todos.",
+    )
+    selected_positions = st.multiselect(
+        "Posição",
+        options=position_options,
+        default=[ALL_POSITIONS_LABEL],
+        help="Filtre por posição. Mantenha «Todas as posições» para ver todos.",
+    )
+    if not selected_teams:
+        selected_teams = [ALL_TEAMS_LABEL]
+    if not selected_positions:
+        selected_positions = [ALL_POSITIONS_LABEL]
     with st.expander("Arquivos de dados", expanded=False):
         for line in _dataset_file_lines():
             st.markdown(line)
-    st.markdown("---")
-    impact_plays_only = st.checkbox(
-        "Apenas impact plays nos mapas",
-        value=False,
-        help="Filtra passes de impacto nos mapas (aproximação ao gol + xT v4).",
-    )
+
+filtered_registry = _filter_players_registry(
+    players_registry,
+    minutes_info,
+    teams=selected_teams,
+    positions=selected_positions,
+)
+full_registry = _filter_players_registry(
+    players_registry,
+    minutes_info,
+    teams=[ALL_TEAMS_LABEL],
+    positions=[ALL_POSITIONS_LABEL],
+)
+rank_pool = _build_ranking_players(
+    player_data,
+    full_registry,
+    box_stats=box_stats,
+    minutes_info=minutes_info,
+)
 
 tab_analysis, tab_ranking = st.tabs(
     ["Análise", "Ranking"]
@@ -4251,9 +4514,16 @@ tab_analysis, tab_ranking = st.tabs(
 with tab_analysis:
     render_analysis_tab(
         player_data,
-        players_registry,
-        impact_plays_only=impact_plays_only,
+        filtered_registry,
+        minutes_info=minutes_info,
+        box_stats=box_stats,
+        rank_pool=rank_pool,
     )
 
 with tab_ranking:
-    render_ranking_tab(player_data, players_registry)
+    render_ranking_tab(
+        player_data,
+        filtered_registry,
+        minutes_info=minutes_info,
+        box_stats=box_stats,
+    )
