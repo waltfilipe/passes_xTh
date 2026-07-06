@@ -73,15 +73,19 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 6
-SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
+DATA_CACHE_VERSION = 7
+SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
 DATASET_FILES = (
-    (SEASON_ALL_CSV_PATH, "season_all_br.csv", "passes com coordenadas"),
+    (SEASON_ALL_CSV_PATH, "season_all.csv", "passes com coordenadas"),
     (PLAYER_MATCH_STATS_PATH, "player_match_stats.csv", "minutos jogados (SofaScore)"),
 )
-MIN_MINUTES_PCT = 0.35
+MIN_MINUTES_PCT = 0.30
 RANKING_TOP_N = 20
+RATING_TOP_N = 20
+RATING_MIN_MINUTES_PCT = 0.30
+RATING_SCORE_BEST = 1.0
+RATING_SCORE_WORST = 0.5
 DEFAULT_PLAYER_POSITION = "CM"
 PLAYER_TONE_PALETTE = (
     "#5b9bd5", "#e67e22", "#22c55e", "#9333ea", "#dc2626",
@@ -1599,7 +1603,7 @@ def _merge_box_stats(
     return _derive_rate_metrics(merged)
 
 
-@st.cache_data(show_spinner="Carregando season_all_br.csv…")
+@st.cache_data(show_spinner="Carregando season_all.csv…")
 def load_season_dataset(
     _cache_version: int = DATA_CACHE_VERSION,
 ) -> tuple[list[dict], dict[str, pd.DataFrame]]:
@@ -2604,6 +2608,55 @@ RANKING_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+RATING_METRIC_KEYS: tuple[str, ...] = tuple(
+    key for _, keys in RANKING_METRIC_GROUPS for key in keys
+)
+
+
+def _rank_to_rating_score(rank: int, pool_size: int) -> float:
+    """Map position rank to score: 1st -> 1.0, last -> 0.5 (linear)."""
+    if pool_size <= 1:
+        return RATING_SCORE_BEST
+    span = RATING_SCORE_BEST - RATING_SCORE_WORST
+    return RATING_SCORE_WORST + span * (pool_size - rank) / (pool_size - 1)
+
+
+def _compute_pass_ratings(players: list[dict]) -> list[dict]:
+    """Average per-metric position scores (1.0 best, 0.5 worst) for each player."""
+    by_position: dict[str, list[dict]] = {}
+    for player in players:
+        by_position.setdefault(str(player.get("position") or "—"), []).append(player)
+
+    rated: list[dict] = []
+    for pos_players in by_position.values():
+        pool_size = len(pos_players)
+        if pool_size == 0:
+            continue
+        metric_scores: dict[str, list[float]] = {
+            player["player_id"]: [] for player in pos_players
+        }
+        for metric_key in RATING_METRIC_KEYS:
+            ordered = sorted(
+                pos_players,
+                key=lambda p: p.get(metric_key, 0) or 0,
+                reverse=True,
+            )
+            for rank, player in enumerate(ordered, start=1):
+                metric_scores[player["player_id"]].append(
+                    _rank_to_rating_score(rank, pool_size)
+                )
+        for player in pos_players:
+            scores = metric_scores[player["player_id"]]
+            rated.append(
+                {
+                    **player,
+                    "pass_rating": round(sum(scores) / len(scores), 4) if scores else 0.0,
+                    "pass_rating_metric_count": len(scores),
+                }
+            )
+    return rated
+
+
 def _pass_player_metrics(
     player_data: dict[str, pd.DataFrame],
     player: dict,
@@ -2803,6 +2856,83 @@ def _ranking_table(
     return pd.DataFrame(rows)
 
 
+def render_rating_tab(
+    player_data: dict[str, pd.DataFrame],
+    players_registry: list[dict],
+    *,
+    minutes_info: dict[str, dict],
+    box_stats: dict[str, dict],
+) -> None:
+    """Top pass rating by position (average of per-metric position scores)."""
+    st.markdown("### Rating · Passes")
+    st.caption(
+        f"Jogadores de linha com mais de **{int(RATING_MIN_MINUTES_PCT * 100)}%** dos minutos "
+        f"do time. Para cada métrica e posição: **1º = {RATING_SCORE_BEST:.1f}**, "
+        f"**último = {RATING_SCORE_WORST:.1f}** (interpolação linear). "
+        f"Rating = média dos {len(RATING_METRIC_KEYS)} scores."
+    )
+
+    players = _build_ranking_players(
+        player_data,
+        players_registry,
+        box_stats=box_stats,
+        minutes_info=minutes_info,
+        min_minutes_pct=RATING_MIN_MINUTES_PCT,
+    )
+    if not players:
+        st.warning("Nenhum jogador elegível para o rating com o filtro de minutos.")
+        return
+
+    rated = _compute_pass_ratings(players)
+    if not rated:
+        st.warning("Não foi possível calcular ratings.")
+        return
+
+    st.caption(
+        f"{len(rated)} jogadores elegíveis · top **{RATING_TOP_N}** por posição (CB, CM, …)"
+    )
+
+    with st.expander("Métricas do rating", expanded=False):
+        for group_title, keys in RANKING_METRIC_GROUPS:
+            labels = ", ".join(_metric_label(k) for k in keys)
+            st.markdown(f"**{group_title}** — {labels}")
+
+    by_position: dict[str, list[dict]] = {}
+    for player in rated:
+        by_position.setdefault(str(player.get("position") or "—"), []).append(player)
+
+    for position in sorted(by_position.keys()):
+        top_players = sorted(
+            by_position[position],
+            key=lambda p: p.get("pass_rating", 0) or 0,
+            reverse=True,
+        )[:RATING_TOP_N]
+        if not top_players:
+            continue
+
+        st.markdown(
+            f'<div class="player-header" style="border-left:4px solid #5b9bd5;padding-left:0.5rem;">'
+            f"{position}</div>",
+            unsafe_allow_html=True,
+        )
+        rows = []
+        for idx, player in enumerate(top_players, start=1):
+            pct = player.get("minutes_pct")
+            rows.append(
+                {
+                    "#": idx,
+                    "Jogador": player["player_name"],
+                    "Time": player.get("team", "—"),
+                    "Rating": _fmt_decimal(player.get("pass_rating"), decimals=3),
+                    "Min": _fmt_count(player.get("minutes")),
+                    "Min %": _fmt_pct(pct * 100.0) if pct is not None else "—",
+                    "Passes": _fmt_count(player.get("passes_completed")),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.markdown("---")
+
+
 def render_ranking_tab(
     player_data: dict[str, pd.DataFrame],
     players_registry: list[dict],
@@ -2814,7 +2944,7 @@ def render_ranking_tab(
     st.markdown("### Ranking · Passes")
     st.caption(
         f"Jogadores de linha com pelo menos **{int(MIN_MINUTES_PCT * 100)}%** dos minutos "
-        "possíveis do time. Rankings na aba Análise são por **posição** (CB, CM, …)."
+        "possíveis do time. Top por grupo de posição (GK, DEF, MID, ATT)."
     )
 
     players = _build_ranking_players(
@@ -4488,24 +4618,16 @@ with st.sidebar:
         for line in _dataset_file_lines():
             st.markdown(line)
 
-rank_pool = _build_ranking_players(
-    player_data,
-    players_registry,
-    box_stats=box_stats,
-    minutes_info=minutes_info,
+tab_rating, tab_ranking = st.tabs(
+    ["Rating", "Ranking"]
 )
 
-tab_analysis, tab_ranking = st.tabs(
-    ["Análise", "Ranking"]
-)
-
-with tab_analysis:
-    render_analysis_tab(
+with tab_rating:
+    render_rating_tab(
         player_data,
         players_registry,
         minutes_info=minutes_info,
         box_stats=box_stats,
-        rank_pool=rank_pool,
     )
 
 with tab_ranking:
