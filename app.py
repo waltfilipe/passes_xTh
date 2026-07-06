@@ -73,7 +73,7 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 4
+DATA_CACHE_VERSION = 5
 ALL_TEAMS_LABEL = "Todos os times"
 ALL_POSITIONS_LABEL = "Todas as posições"
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
@@ -196,6 +196,9 @@ CARD_LABEL_TEXT = "12px"
 CARD_VALUE_TEXT = "18px"
 CARD_INNER_BORDER = "rgba(107,114,128,0.45)"
 TOP_DELTAXT_N = 10
+TOP_IMPACT_SOMXT_N = 20
+LONG_PASS_MIN_DISTANCE_M = 30.0
+DXT_IMPACT_THRESHOLD = 0.1
 IMPACT_PASS_MIN_GOAL_APPROACH_FINAL_THIRD = 5.0
 IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 
@@ -1556,6 +1559,28 @@ def load_player_minutes_info(_cache_version: int = DATA_CACHE_VERSION) -> dict[s
     return out
 
 
+def _derive_rate_metrics(stats: dict) -> dict:
+    """Per-90 and cross-layer ratios that need minutes or long-pass totals."""
+    out = dict(stats)
+    minutes = stats.get("minutes")
+
+    out["impact_passes_p90"] = _per90(stats.get("impact_passes", 0), minutes)
+    out["phi_p90"] = _per90(stats.get("high_impact_passes", 0), minutes)
+    out["dxt_p90"] = _per90(stats.get("sum_dxt_passes", 0), minutes)
+    out["long_impact_passes_p90"] = _per90(stats.get("long_impact_passes", 0), minutes)
+
+    out["impact_eff_pct"] = stats.get("impact_accuracy_pct", 0)
+    out["phi_eff_pct"] = stats.get("high_impact_accuracy_pct", 0)
+    out["long_impact_eff_pct"] = stats.get("long_impact_accuracy_pct", 0)
+
+    long_total = stats.get("long_passes_total", 0) or 0
+    out["long_impact_per_long_pass"] = _safe_ratio(
+        stats.get("long_impact_passes", 0), long_total
+    )
+
+    return out
+
+
 def _merge_box_stats(
     stats: dict,
     player_code: str,
@@ -1573,7 +1598,7 @@ def _merge_box_stats(
             else:
                 merged[key] = val
 
-    return merged
+    return _derive_rate_metrics(merged)
 
 
 @st.cache_data(show_spinner="Carregando season_all_br.csv…")
@@ -1619,6 +1644,12 @@ def _safe_ratio(numerator: float, denominator: int, *, decimals: int = 3) -> flo
     if not denominator:
         return 0.0
     return round(float(numerator) / denominator, decimals)
+
+
+def _per90(total: float | int, minutes: float | int | None, *, decimals: int = 3) -> float:
+    if not minutes:
+        return 0.0
+    return round(float(total) * 90.0 / float(minutes), decimals)
 
 
 def _fmt_count(value: int | float | None) -> str:
@@ -1704,11 +1735,19 @@ def _empty_pass_layer_metrics() -> dict:
         "dxt_per_construction_pass": 0.0,
         "dxt_per_aggression_pass": 0.0,
         "construction_share_pct": 0.0,
+        "impact_per_pass": 0.0,
+        "phi_per_pass": 0.0,
+        "dxt_gt_01_pct": 0.0,
+        "sum_xt_end_top20_passes": 0.0,
+        "construction_aip": 0,
+        "construction_aip_per_pass": 0.0,
+        "aggression_aip": 0,
+        "aggression_aip_per_pass": 0.0,
     }
 
 
 def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
-    """Flat pass metrics for any pass subset (todos os passes ou longos SofaScore)."""
+    """Flat pass metrics for any pass subset (todos os passes ou longos >30 m)."""
     if passes.empty:
         return _empty_pass_layer_metrics()
 
@@ -1733,6 +1772,10 @@ def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
     xt_passes = passes[passes["has_end"]]
     pos_count = int((xt_passes[delta_col] > 0).sum()) if not xt_passes.empty else 0
     pos_pct = (pos_count / len(xt_passes) * 100.0) if len(xt_passes) else 0.0
+    dxt_gt_01_count = (
+        int((xt_passes[delta_col] > DXT_IMPACT_THRESHOLD).sum()) if not xt_passes.empty else 0
+    )
+    dxt_gt_01_pct = (dxt_gt_01_count / len(xt_passes) * 100.0) if len(xt_passes) else 0.0
 
     sum_dxt_passes = float(passes[delta_col].sum())
     offensive_passes = passes[passes["x_start"] >= HALF_LINE_X]
@@ -1778,6 +1821,14 @@ def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
     sum_xt_end_top10_passes = (
         float(top10_passes[end_col].sum()) if not top10_passes.empty else 0.0
     )
+    top20_passes = (
+        positive_completed.nlargest(TOP_IMPACT_SOMXT_N, delta_col)
+        if not positive_completed.empty
+        else completed_passes.iloc[0:0]
+    )
+    sum_xt_end_top20_passes = (
+        float(top20_passes[end_col].sum()) if not top20_passes.empty else 0.0
+    )
 
     key_passes_completed = completed_passes[completed_passes["is_key_pass"]]
     sum_xt_end_key_passes = (
@@ -1792,6 +1843,12 @@ def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
     aggression_zone = zone_breakdown["aggression"]
     construction_success_count = construction_zone["passes"]
     aggression_success_count = aggression_zone["passes"]
+    construction_aip = (
+        construction_zone["impact_passes"] + construction_zone["high_impact_passes"]
+    )
+    aggression_aip = (
+        aggression_zone["impact_passes"] + aggression_zone["high_impact_passes"]
+    )
 
     return {
         "passes_total": total_passes,
@@ -1818,9 +1875,15 @@ def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
         "sum_xt_end_final_third": sum_xt_end_final_third,
         "sum_xt_end_long_balls": sum_xt_end_long_balls,
         "sum_xt_end_top10_passes": sum_xt_end_top10_passes,
+        "sum_xt_end_top20_passes": sum_xt_end_top20_passes,
         "sum_xt_end_key_passes": sum_xt_end_key_passes,
         "sum_xt_end_impact_passes": sum_xt_end_impact_passes,
         "pos_pct": round(pos_pct, 1),
+        "dxt_gt_01_pct": round(dxt_gt_01_pct, 1),
+        "impact_per_pass": _safe_ratio(int(impact_pass["successful"]), total_passes),
+        "phi_per_pass": _safe_ratio(int(high_impact_pass["successful"]), total_passes),
+        "impact_eff_pct": impact_pass["accuracy_pct"],
+        "phi_eff_pct": high_impact_pass["accuracy_pct"],
         "xt_per_pass": _safe_ratio(sum_xt_end_passes, len(completed_passes)),
         "dxt_per_pass": _safe_ratio(sum_dxt_passes, len(completed_passes)),
         "xt_per_pass_final_third": _safe_ratio(sum_xt_end_passes_final_third, len(completed_ft)),
@@ -1850,6 +1913,10 @@ def _pass_layer_metrics(passes: pd.DataFrame, cols: dict[str, str]) -> dict:
         )
         if len(completed_passes)
         else 0.0,
+        "construction_aip": int(construction_aip),
+        "construction_aip_per_pass": _safe_ratio(construction_aip, construction_success_count),
+        "aggression_aip": int(aggression_aip),
+        "aggression_aip_per_pass": _safe_ratio(aggression_aip, aggression_success_count),
     }
 
 
@@ -1883,7 +1950,17 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
     )
 
     all_layer = _pass_layer_metrics(passes, cols)
-    long_passes = passes[passes["is_long_ball"].astype(bool)]
+    if "pass_distance" not in passes.columns:
+        passes = passes.copy()
+        passes["pass_distance"] = np.where(
+            passes["has_end"],
+            np.sqrt(
+                (passes["x_end"] - passes["x_start"]) ** 2
+                + (passes["y_end"] - passes["y_start"]) ** 2
+            ),
+            0.0,
+        )
+    long_passes = passes[passes["pass_distance"] > LONG_PASS_MIN_DISTANCE_M]
     long_layer = _prefix_metric_keys(_pass_layer_metrics(long_passes, cols), "long_")
 
     if passes.empty:
@@ -2452,40 +2529,80 @@ def _stats_to_rankable_metrics(stats: dict) -> dict:
 
 
 PLAYER_RANKABLE_METRIC_KEYS: tuple[str, ...] = (
-    "passes_total", "passes_completed", "passes_accuracy_pct", "key_passes", "crosses", "long_balls",
-    "progressive_passes", "progressive_attempted", "progressive_accuracy_pct",
-    "impact_passes", "impact_attempted", "impact_accuracy_pct",
-    "high_impact_passes", "high_impact_attempted", "high_impact_accuracy_pct",
-    "sum_dxt_passes", "sum_dxt_passes_offensive", "sum_xt_end_passes",
-    "sum_xt_end_final_third", "sum_xt_end_long_balls", "sum_xt_end_top10_passes",
-    "sum_xt_end_key_passes", "sum_xt_end_impact_passes",
-    "pos_pct", "xt_per_pass", "dxt_per_pass", "xt_per_pass_final_third",
-    "xt_per_prog_pass", "xt_per_impact_pass", "xt_per_long_ball",
-    "construction_passes", "aggression_passes", "construction_share_pct",
-    "progressive_passes_construction", "progressive_passes_aggression",
-    "impact_passes_construction", "impact_passes_aggression",
-    "high_impact_passes_construction", "high_impact_passes_aggression",
-    "sum_dxt_construction", "sum_dxt_aggression",
-    "sum_xt_end_construction", "sum_xt_end_aggression",
-    "dxt_per_construction_pass", "dxt_per_aggression_pass",
-    "long_passes_total", "long_passes_completed", "long_passes_accuracy_pct",
-    "long_key_passes", "long_crosses", "long_long_balls",
-    "long_progressive_passes", "long_progressive_attempted", "long_progressive_accuracy_pct",
-    "long_impact_passes", "long_impact_attempted", "long_impact_accuracy_pct",
-    "long_high_impact_passes", "long_high_impact_attempted", "long_high_impact_accuracy_pct",
-    "long_sum_dxt_passes", "long_sum_dxt_passes_offensive", "long_sum_xt_end_passes",
-    "long_sum_xt_end_final_third", "long_sum_xt_end_long_balls", "long_sum_xt_end_top10_passes",
-    "long_sum_xt_end_key_passes", "long_sum_xt_end_impact_passes",
-    "long_pos_pct", "long_xt_per_pass", "long_dxt_per_pass", "long_xt_per_pass_final_third",
-    "long_xt_per_prog_pass", "long_xt_per_impact_pass", "long_xt_per_long_ball",
-    "long_construction_passes", "long_aggression_passes", "long_construction_share_pct",
-    "long_progressive_passes_construction", "long_progressive_passes_aggression",
-    "long_impact_passes_construction", "long_impact_passes_aggression",
-    "long_high_impact_passes_construction", "long_high_impact_passes_aggression",
-    "long_sum_dxt_construction", "long_sum_dxt_aggression",
-    "long_sum_xt_end_construction", "long_sum_xt_end_aggression",
-    "long_dxt_per_construction_pass", "long_dxt_per_aggression_pass",
-    "minutes", "pass_value",
+    "impact_passes_p90",
+    "impact_per_pass",
+    "impact_eff_pct",
+    "phi_p90",
+    "phi_per_pass",
+    "phi_eff_pct",
+    "dxt_p90",
+    "dxt_per_pass",
+    "dxt_gt_01_pct",
+    "sum_xt_end_top20_passes",
+    "construction_aip",
+    "construction_aip_per_pass",
+    "aggression_aip",
+    "aggression_aip_per_pass",
+    "long_impact_passes_p90",
+    "long_impact_per_long_pass",
+    "long_impact_eff_pct",
+    "long_passes_total",
+    "impact_passes",
+    "high_impact_passes",
+    "sum_dxt_passes",
+    "passes_total",
+    "minutes",
+    "pass_value",
+)
+
+RANKING_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "All-around pass efficiency and impact",
+        (
+            "impact_passes_p90",
+            "impact_per_pass",
+            "impact_eff_pct",
+            "phi_p90",
+            "phi_per_pass",
+            "phi_eff_pct",
+        ),
+    ),
+    (
+        "How much impact",
+        (
+            "dxt_p90",
+            "dxt_per_pass",
+        ),
+    ),
+    (
+        "How often impact",
+        (
+            "dxt_gt_01_pct",
+        ),
+    ),
+    (
+        "Top impact",
+        (
+            "sum_xt_end_top20_passes",
+        ),
+    ),
+    (
+        "Construction & aggression efficiency",
+        (
+            "construction_aip",
+            "construction_aip_per_pass",
+            "aggression_aip",
+            "aggression_aip_per_pass",
+        ),
+    ),
+    (
+        "Long balls (>30 m) efficiency & impact",
+        (
+            "long_impact_passes_p90",
+            "long_impact_per_long_pass",
+            "long_impact_eff_pct",
+        ),
+    ),
 )
 
 
@@ -2605,75 +2722,30 @@ def _metric_label(key: str) -> str:
 
 
 METRIC_LABELS: dict[str, str] = {
-    "passes_total": "Passes (total)",
-    "passes_completed": "Passes completados",
-    "passes_accuracy_pct": "% acerto passes",
-    "key_passes": "Key passes",
-    "crosses": "Crosses",
-    "long_balls": "Bolas longas (SofaScore)",
-    "progressive_passes": "Passes progressivos",
-    "progressive_attempted": "Prog. tentados",
-    "progressive_accuracy_pct": "% acerto prog.",
-    "impact_passes": "Passes Impact",
-    "impact_attempted": "Impact tentados",
-    "impact_accuracy_pct": "% acerto Impact",
-    "high_impact_passes": "High Impact",
-    "high_impact_attempted": "High Impact tentados",
-    "high_impact_accuracy_pct": "% acerto High Impact",
+    "impact_passes_p90": "Passes Impact p90",
+    "impact_per_pass": "Passes Impact / Pass",
+    "impact_eff_pct": "% Eff Pass Impact",
+    "phi_p90": "PHI p90",
+    "phi_per_pass": "PHI / Pass",
+    "phi_eff_pct": "% Eff PHI",
+    "dxt_p90": "ΔxT p90",
+    "dxt_per_pass": "ΔxT / Pass",
+    "dxt_gt_01_pct": "% passes ΔxT > 0.1",
+    "sum_xt_end_top20_passes": "Top 20 Σ xT",
+    "construction_aip": "Construction AIP",
+    "construction_aip_per_pass": "Construction AIP / Construction Passes",
+    "aggression_aip": "Aggression AIP",
+    "aggression_aip_per_pass": "Aggression AIP / Aggression Passes",
+    "long_impact_passes_p90": "Long Passes Impact p90",
+    "long_impact_per_long_pass": "Long Passes Impact / Long Passes",
+    "long_impact_eff_pct": "% Eff Long Passes Impact",
+    "long_passes_total": "Long passes (>30 m)",
+    "impact_passes": "Passes Impact (total)",
+    "high_impact_passes": "PHI (total)",
     "sum_dxt_passes": "Σ ΔxT",
-    "sum_dxt_passes_offensive": "Σ ΔxT campo ofensivo",
-    "sum_xt_end_passes": "Σ xT destino",
-    "sum_xt_end_final_third": "Σ xT terço final",
-    "sum_xt_end_long_balls": "Σ xT bolas longas",
-    "sum_xt_end_top10_passes": "Σ xT top 10 passes",
-    "sum_xt_end_key_passes": "Σ xT key passes",
-    "sum_xt_end_impact_passes": "Σ xT impact passes",
-    "pos_pct": "% passes ΔxT+",
-    "xt_per_pass": "xT / passe",
-    "dxt_per_pass": "ΔxT / passe",
-    "xt_per_pass_final_third": "xT / passe terço final",
-    "xt_per_prog_pass": "xT / passe prog.",
-    "xt_per_impact_pass": "xT / impact passe",
-    "xt_per_long_ball": "xT / bola longa",
-    "construction_passes": "Passes Construção",
-    "aggression_passes": "Passes Agressão",
-    "construction_share_pct": "% construção",
-    "progressive_passes_construction": "Prog. Construção",
-    "progressive_passes_aggression": "Prog. Agressão",
-    "impact_passes_construction": "Impact Construção",
-    "impact_passes_aggression": "Impact Agressão",
-    "high_impact_passes_construction": "High Impact Construção",
-    "high_impact_passes_aggression": "High Impact Agressão",
-    "sum_dxt_construction": "Σ ΔxT Construção",
-    "sum_dxt_aggression": "Σ ΔxT Agressão",
-    "sum_xt_end_construction": "Σ xT Construção",
-    "sum_xt_end_aggression": "Σ xT Agressão",
-    "dxt_per_construction_pass": "ΔxT / passe construção",
-    "dxt_per_aggression_pass": "ΔxT / passe agressão",
+    "passes_total": "Passes (total)",
     "minutes": "Minutos",
     "pass_value": "Valor passe (SofaScore)",
-    "long_passes_total": "Longos — passes (total)",
-    "long_passes_completed": "Longos — completados",
-    "long_passes_accuracy_pct": "Longos — % acerto",
-    "long_key_passes": "Longos — key passes",
-    "long_progressive_passes": "Longos — progressivos",
-    "long_impact_passes": "Longos — Impact",
-    "long_high_impact_passes": "Longos — High Impact",
-    "long_sum_dxt_passes": "Longos — Σ ΔxT",
-    "long_sum_xt_end_passes": "Longos — Σ xT",
-    "long_sum_dxt_construction": "Longos — Σ ΔxT Construção",
-    "long_sum_dxt_aggression": "Longos — Σ ΔxT Agressão",
-    "long_sum_xt_end_construction": "Longos — Σ xT Construção",
-    "long_sum_xt_end_aggression": "Longos — Σ xT Agressão",
-    "long_progressive_passes_construction": "Longos — prog. construção",
-    "long_progressive_passes_aggression": "Longos — prog. agressão",
-    "long_impact_passes_construction": "Longos — impact construção",
-    "long_impact_passes_aggression": "Longos — impact agressão",
-    "long_high_impact_passes_construction": "Longos — HI construção",
-    "long_high_impact_passes_aggression": "Longos — HI agressão",
-    "long_dxt_per_pass": "Longos — ΔxT / passe",
-    "long_xt_per_pass": "Longos — xT / passe",
-    "long_pos_pct": "Longos — % ΔxT+",
 }
 
 
@@ -2682,83 +2754,41 @@ def _fmt_metric_value(key: str, value) -> str:
         return "—"
     if key.endswith("_pct") or key.endswith("accuracy_pct") or key == "pos_pct":
         return _fmt_pct(float(value))
+    if key.endswith("_p90"):
+        return _fmt_decimal(float(value), decimals=3)
     if isinstance(value, float):
         decimals = 4 if "per_" in key else 3
         return _fmt_decimal(value, decimals=decimals)
     return _fmt_count(value)
 
 
-STATS_CARD_SECTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+STATS_CARD_SECTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = tuple(
     (
-        "Volume · todos os passes",
-        STAT_CARD_GENERAL_COLOR,
+        title,
         (
-            "passes_total", "passes_completed", "passes_accuracy_pct", "key_passes",
-            "crosses", "long_balls", "minutes", "pass_value",
-        ),
-    ),
+            STAT_CARD_GENERAL_COLOR,
+            STAT_CARD_IMPACT_COLOR,
+            STAT_CARD_XT_COLOR,
+            STAT_CARD_ATTACK_COLOR,
+            "#a78bfa",
+            "#f59e0b",
+        )[idx % 6],
+        keys,
+    )
+    for idx, (title, keys) in enumerate(RANKING_METRIC_GROUPS)
+) + (
     (
-        "Progressão & Impact · todos os passes",
-        STAT_CARD_IMPACT_COLOR,
-        (
-            "progressive_passes", "progressive_attempted", "progressive_accuracy_pct",
-            "impact_passes", "impact_attempted", "impact_accuracy_pct",
-            "high_impact_passes", "high_impact_attempted", "high_impact_accuracy_pct",
-            "pos_pct",
-        ),
-    ),
-    (
-        "xT · todos os passes",
-        STAT_CARD_XT_COLOR,
-        (
-            "sum_dxt_passes", "sum_dxt_passes_offensive", "sum_xt_end_passes",
-            "sum_xt_end_final_third", "sum_xt_end_key_passes", "sum_xt_end_impact_passes",
-            "sum_xt_end_top10_passes", "sum_xt_end_long_balls",
-            "dxt_per_pass", "xt_per_pass", "xt_per_prog_pass", "xt_per_impact_pass",
-            "xt_per_pass_final_third", "xt_per_long_ball",
-        ),
-    ),
-    (
-        "Construção vs Agressão · todos os passes",
-        STAT_CARD_ATTACK_COLOR,
-        (
-            "construction_passes", "aggression_passes", "construction_share_pct",
-            "progressive_passes_construction", "progressive_passes_aggression",
-            "impact_passes_construction", "impact_passes_aggression",
-            "high_impact_passes_construction", "high_impact_passes_aggression",
-            "sum_dxt_construction", "sum_dxt_aggression",
-            "sum_xt_end_construction", "sum_xt_end_aggression",
-            "dxt_per_construction_pass", "dxt_per_aggression_pass",
-        ),
-    ),
-    (
-        "Passes longos · SofaScore (isLongBall)",
-        "#a78bfa",
-        (
-            "long_passes_total", "long_passes_completed", "long_passes_accuracy_pct",
-            "long_key_passes", "long_progressive_passes", "long_progressive_attempted",
-            "long_progressive_accuracy_pct", "long_impact_passes", "long_impact_attempted",
-            "long_impact_accuracy_pct", "long_high_impact_passes", "long_high_impact_attempted",
-            "long_high_impact_accuracy_pct", "long_pos_pct",
-            "long_sum_dxt_passes", "long_sum_xt_end_passes", "long_sum_xt_end_final_third",
-            "long_sum_xt_end_key_passes", "long_sum_xt_end_impact_passes",
-            "long_dxt_per_pass", "long_xt_per_pass", "long_xt_per_prog_pass", "long_xt_per_impact_pass",
-            "long_construction_passes", "long_aggression_passes", "long_construction_share_pct",
-            "long_progressive_passes_construction", "long_progressive_passes_aggression",
-            "long_impact_passes_construction", "long_impact_passes_aggression",
-            "long_high_impact_passes_construction", "long_high_impact_passes_aggression",
-            "long_sum_dxt_construction", "long_sum_dxt_aggression",
-            "long_sum_xt_end_construction", "long_sum_xt_end_aggression",
-            "long_dxt_per_construction_pass", "long_dxt_per_aggression_pass",
-        ),
+        "Contexto",
+        "#64748b",
+        ("passes_total", "long_passes_total", "minutes", "pass_value"),
     ),
 )
 
 
 RANKING_METRICS: tuple[tuple[str, str, object], ...] = tuple(
     (key, _metric_label(key), (lambda k: lambda v: _fmt_metric_value(k, v))(key))
-    for key in PLAYER_RANKABLE_METRIC_KEYS
-    if key not in ("minutes", "pass_value")
+    for _, keys in RANKING_METRIC_GROUPS
+    for key in keys
 )
 
 RANKING_METRIC_KEYS: tuple[str, ...] = tuple(m[0] for m in RANKING_METRICS)
@@ -2834,13 +2864,16 @@ def render_ranking_tab(
     with st.expander("Camadas de análise", expanded=False):
         st.markdown(
             f"""
-**Todos os passes** — métricas sobre o volume completo de passes com coordenadas.
+**Impact & PHI** — passes que aproximam o gol com ΔxT progressivo (v4). \
+PHI = Passes High Impact.
+
+**AIP** — All Impact Passes = Passes Impact + PHI (por zona de destino).
 
 **Construção vs Agressão** — destino fora (x &lt; {PASS_AGGRESSION_X_MIN:.0f} m) ou dentro \
 dos últimos **{PASS_AGGRESSION_DEPTH:.0f} m** (x ≥ {PASS_AGGRESSION_X_MIN:.0f} m).
 
-**Passes longos (SofaScore)** — subsete com flag `isLongBall` no export; \
-todas as métricas são recalculadas só para essa camada.
+**Passes longos** — distância euclidiana &gt; **{LONG_PASS_MIN_DISTANCE_M:.0f} m** \
+(não usa flag SofaScore `isLongBall`).
             """
         )
 
@@ -2849,6 +2882,15 @@ todas as métricas são recalculadas só para essa camada.
         group = player.get("position_group")
         if group in by_group:
             by_group[group].append(player)
+
+    ranking_metrics = [
+        (group_title, metric_key, metric_label, fmt_fn)
+        for group_title, keys in RANKING_METRIC_GROUPS
+        for metric_key in keys
+        for metric_label, fmt_fn in [
+            (_metric_label(metric_key), (lambda k: lambda v: _fmt_metric_value(k, v))(metric_key))
+        ]
+    ]
 
     for group in POSITION_GROUPS_ORDER:
         group_players = by_group[group]
@@ -2860,15 +2902,23 @@ todas as métricas são recalculadas só para essa camada.
             f"{group}</div>",
             unsafe_allow_html=True,
         )
+        current_group: str | None = None
         metric_cols = st.columns(3)
-        for col_idx, (metric_key, metric_label, fmt_fn) in enumerate(RANKING_METRICS):
-            with metric_cols[col_idx % 3]:
+        col_slot = 0
+        for group_title, metric_key, metric_label, fmt_fn in ranking_metrics:
+            if group_title != current_group:
+                current_group = group_title
+                st.markdown(f"**{group_title}**")
+                metric_cols = st.columns(3)
+                col_slot = 0
+            with metric_cols[col_slot % 3]:
                 st.markdown(f"**{metric_label}**")
                 table = _ranking_table(
                     group_players, metric_key, metric_label, fmt_fn
                 )
                 st.dataframe(table, use_container_width=True, hide_index=True, height=420)
-            if col_idx % 3 == 2 and col_idx + 1 < len(RANKING_METRICS):
+            col_slot += 1
+            if col_slot % 3 == 0:
                 metric_cols = st.columns(3)
         st.markdown("---")
 
@@ -3836,7 +3886,7 @@ def render_analysis_tab(
         if mins else "minutos indisponíveis"
     )
     st.caption(
-        f"xT heurístico **v4** · {mins_label} · passes longos = flag **isLongBall** (SofaScore)"
+        f"xT heurístico **v4** · {mins_label} · passes longos = distância &gt; **{LONG_PASS_MIN_DISTANCE_M:.0f} m**"
     )
     stats = _merge_box_stats(
         compute_player_stats(df), player["code"], box_stats
