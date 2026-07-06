@@ -73,7 +73,7 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 2
+DATA_CACHE_VERSION = 3
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
 DATASET_FILES = (
@@ -125,9 +125,9 @@ XT_V3_WIDE_FRAC = 0.60
 XT_V3_NEG_RECYCLE_X_MAX = 60.0
 XT_V4_BOX_X_START = 90.0
 XT_V4_BOX_X_FULL = 112.0
-# Zona de agressão: destino do passe dentro da área (StatsBomb 120×80)
-PASS_AGGRESSION_X_MIN = XT_V4_BOX_X_START
-PASS_AGGRESSION_Y_HALF_WIDTH = 22.0
+# Zona de agressão: últimos 30 m do campo (StatsBomb 120×80, ataque → gol)
+PASS_AGGRESSION_DEPTH = 30.0
+PASS_AGGRESSION_X_MIN = FIELD_X - PASS_AGGRESSION_DEPTH
 XT_V4_CORNER_LAT_ON = 0.58
 XT_V4_CORNER_PENALTY = 0.10
 XT_V4_CENTRAL_PREMIUM = 0.06
@@ -283,16 +283,62 @@ def is_progressive_wyscout(x_start: float, y_start: float, x_end: float, y_end: 
     return progress >= WYSCOUT_PROG_CROSS_HALF
 
 
-def is_aggression_pass_end(x_end: float, y_end: float) -> bool:
-    """Passe de agressão: destino dentro da área (zona de finalização)."""
-    if x_end < PASS_AGGRESSION_X_MIN:
-        return False
-    return abs(y_end - GOAL_Y) <= PASS_AGGRESSION_Y_HALF_WIDTH
+def is_aggression_pass_end(x_end: float, y_end: float | None = None) -> bool:
+    """Passe de agressão: destino nos últimos 30 m do campo (x ≥ 90 m)."""
+    return float(x_end) >= PASS_AGGRESSION_X_MIN
 
 
-def is_construction_pass_end(x_end: float, y_end: float) -> bool:
-    """Passe de construção: destino fora da área."""
-    return not is_aggression_pass_end(x_end, y_end)
+def is_construction_pass_end(x_end: float, y_end: float | None = None) -> bool:
+    """Passe de construção: destino fora dos últimos 30 m (x < 90 m)."""
+    return float(x_end) < PASS_AGGRESSION_X_MIN
+
+
+def _pass_destination_zone_mask(passes: pd.DataFrame, zone: str) -> pd.Series:
+    if zone == "aggression":
+        return passes["has_end"] & (passes["x_end"] >= PASS_AGGRESSION_X_MIN)
+    return passes["has_end"] & (passes["x_end"] < PASS_AGGRESSION_X_MIN)
+
+
+def _zone_pass_breakdown(passes: pd.DataFrame, cols: dict[str, str]) -> dict[str, dict]:
+    """Split pass metrics by construction vs aggression destination zone."""
+    delta_col, end_col = cols["delta"], cols["end"]
+    breakdown: dict[str, dict] = {}
+    for zone in ("construction", "aggression"):
+        zone_mask = _pass_destination_zone_mask(passes, zone)
+        zone_passes = passes[zone_mask]
+        zone_completed = zone_passes[zone_passes["is_success"]]
+        prog_mask = zone_passes.apply(
+            lambda r: bool(r.is_success and _is_prog_wyscout_row(r)), axis=1
+        )
+        impact_mask = zone_passes.apply(
+            lambda r: bool(r.is_won and is_impact_pass_attempt(r, cols)), axis=1
+        )
+        high_impact_mask = zone_passes.apply(
+            lambda r: bool(r.is_won and is_high_impact_pass_attempt(r, cols)), axis=1
+        )
+        breakdown[zone] = {
+            "passes": int(len(zone_completed)),
+            "progressive_passes": int(prog_mask.sum()),
+            "impact_passes": int(impact_mask.sum()),
+            "high_impact_passes": int(high_impact_mask.sum()),
+            "sum_dxt": float(zone_passes[delta_col].sum()),
+            "sum_xt_end": (
+                float(zone_completed[end_col].sum()) if not zone_completed.empty else 0.0
+            ),
+        }
+    return breakdown
+
+
+def _empty_zone_breakdown() -> dict[str, dict]:
+    empty = {
+        "passes": 0,
+        "progressive_passes": 0,
+        "impact_passes": 0,
+        "high_impact_passes": 0,
+        "sum_dxt": 0.0,
+        "sum_xt_end": 0.0,
+    }
+    return {"construction": empty.copy(), "aggression": empty.copy()}
 
 
 def _parse_bool(value) -> bool:
@@ -1668,6 +1714,12 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
             "xt_per_long_ball": 0.0,
             "construction_passes": 0,
             "aggression_passes": 0,
+            "progressive_passes_construction": 0,
+            "progressive_passes_aggression": 0,
+            "impact_passes_construction": 0,
+            "impact_passes_aggression": 0,
+            "high_impact_passes_construction": 0,
+            "high_impact_passes_aggression": 0,
             "sum_dxt_construction": 0.0,
             "sum_dxt_aggression": 0.0,
             "sum_xt_end_construction": 0.0,
@@ -1764,38 +1816,11 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         float(impact_success[end_col].sum()) if not impact_success.empty else 0.0
     )
 
-    construction_completed = completed_passes[
-        completed_passes.apply(
-            lambda r: is_construction_pass_end(r.x_end, r.y_end), axis=1
-        )
-    ]
-    aggression_completed = completed_passes[
-        completed_passes.apply(
-            lambda r: is_aggression_pass_end(r.x_end, r.y_end), axis=1
-        )
-    ]
-    construction_all = passes[
-        passes["has_end"]
-        & passes.apply(lambda r: is_construction_pass_end(r.x_end, r.y_end), axis=1)
-    ]
-    aggression_all = passes[
-        passes["has_end"]
-        & passes.apply(lambda r: is_aggression_pass_end(r.x_end, r.y_end), axis=1)
-    ]
-    construction_success = construction_all[construction_all["is_success"]]
-    aggression_success = aggression_all[aggression_all["is_success"]]
-    sum_dxt_construction = float(construction_all[delta_col].sum())
-    sum_dxt_aggression = float(aggression_all[delta_col].sum())
-    sum_xt_end_construction = (
-        float(construction_completed[end_col].sum())
-        if not construction_completed.empty
-        else 0.0
-    )
-    sum_xt_end_aggression = (
-        float(aggression_completed[end_col].sum())
-        if not aggression_completed.empty
-        else 0.0
-    )
+    zone_breakdown = _zone_pass_breakdown(passes, cols)
+    construction_zone = zone_breakdown["construction"]
+    aggression_zone = zone_breakdown["aggression"]
+    construction_success_count = construction_zone["passes"]
+    aggression_success_count = aggression_zone["passes"]
 
     return {
         **general,
@@ -1821,20 +1846,26 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         "xt_per_prog_pass": _safe_ratio(float(prog_success[delta_col].sum()), len(prog_success)),
         "xt_per_impact_pass": _safe_ratio(sum_xt_end_impact_passes, len(impact_success)),
         "xt_per_long_ball": _safe_ratio(sum_xt_end_long_balls, len(completed_long_balls)),
-        "construction_passes": int(len(construction_success)),
-        "aggression_passes": int(len(aggression_success)),
-        "sum_dxt_construction": sum_dxt_construction,
-        "sum_dxt_aggression": sum_dxt_aggression,
-        "sum_xt_end_construction": sum_xt_end_construction,
-        "sum_xt_end_aggression": sum_xt_end_aggression,
+        "construction_passes": construction_success_count,
+        "aggression_passes": aggression_success_count,
+        "progressive_passes_construction": construction_zone["progressive_passes"],
+        "progressive_passes_aggression": aggression_zone["progressive_passes"],
+        "impact_passes_construction": construction_zone["impact_passes"],
+        "impact_passes_aggression": aggression_zone["impact_passes"],
+        "high_impact_passes_construction": construction_zone["high_impact_passes"],
+        "high_impact_passes_aggression": aggression_zone["high_impact_passes"],
+        "sum_dxt_construction": construction_zone["sum_dxt"],
+        "sum_dxt_aggression": aggression_zone["sum_dxt"],
+        "sum_xt_end_construction": construction_zone["sum_xt_end"],
+        "sum_xt_end_aggression": aggression_zone["sum_xt_end"],
         "dxt_per_construction_pass": _safe_ratio(
-            sum_dxt_construction, len(construction_success)
+            construction_zone["sum_dxt"], construction_success_count
         ),
         "dxt_per_aggression_pass": _safe_ratio(
-            sum_dxt_aggression, len(aggression_success)
+            aggression_zone["sum_dxt"], aggression_success_count
         ),
         "construction_share_pct": round(
-            len(construction_success) / len(completed_passes) * 100.0, 1
+            construction_success_count / len(completed_passes) * 100.0, 1
         )
         if len(completed_passes)
         else 0.0,
@@ -2394,6 +2425,12 @@ def _pass_player_metrics(
         "pos_pct": round(stats["pos_pct"], 1),
         "construction_passes": int(stats["construction_passes"]),
         "aggression_passes": int(stats["aggression_passes"]),
+        "progressive_passes_construction": int(stats["progressive_passes_construction"]),
+        "progressive_passes_aggression": int(stats["progressive_passes_aggression"]),
+        "impact_passes_construction": int(stats["impact_passes_construction"]),
+        "impact_passes_aggression": int(stats["impact_passes_aggression"]),
+        "high_impact_passes_construction": int(stats["high_impact_passes_construction"]),
+        "high_impact_passes_aggression": int(stats["high_impact_passes_aggression"]),
         "sum_dxt_construction": round(stats["sum_dxt_construction"], 3),
         "sum_dxt_aggression": round(stats["sum_dxt_aggression"], 3),
         "sum_xt_end_construction": round(stats["sum_xt_end_construction"], 3),
@@ -2428,15 +2465,21 @@ def _build_ranking_players(
 
 
 RANKING_METRICS: tuple[tuple[str, str, str], ...] = (
-    ("progressive_passes", "Passes Progressivos", _fmt_count),
-    ("impact_passes", "Passes Impact", _fmt_count),
-    ("high_impact_passes", "Passes High Impact", _fmt_count),
+    ("progressive_passes", "Passes Progressivos (total)", _fmt_count),
+    ("progressive_passes_construction", "Prog. Construção", _fmt_count),
+    ("progressive_passes_aggression", "Prog. Agressão", _fmt_count),
+    ("impact_passes", "Passes Impact (total)", _fmt_count),
+    ("impact_passes_construction", "Impact Construção", _fmt_count),
+    ("impact_passes_aggression", "Impact Agressão", _fmt_count),
+    ("high_impact_passes", "High Impact (total)", _fmt_count),
+    ("high_impact_passes_construction", "High Impact Construção", _fmt_count),
+    ("high_impact_passes_aggression", "High Impact Agressão", _fmt_count),
     ("construction_passes", "Passes Construção", _fmt_count),
     ("aggression_passes", "Passes Agressão", _fmt_count),
-    ("sum_dxt_passes", "Σ ΔxT (passes)", _fmt_decimal),
-    ("sum_xt_end_passes", "Σ xT (passes)", _fmt_decimal),
+    ("sum_dxt_passes", "Σ ΔxT (total)", _fmt_decimal),
     ("sum_dxt_construction", "Σ ΔxT Construção", _fmt_decimal),
     ("sum_dxt_aggression", "Σ ΔxT Agressão", _fmt_decimal),
+    ("sum_xt_end_passes", "Σ xT (total)", _fmt_decimal),
     ("sum_xt_end_construction", "Σ xT Construção", _fmt_decimal),
     ("sum_xt_end_aggression", "Σ xT Agressão", _fmt_decimal),
     ("dxt_per_pass", "ΔxT / passe", _fmt_decimal),
@@ -2549,15 +2592,14 @@ def render_ranking_tab(
     with st.expander("Construção vs Agressão — como classificamos", expanded=False):
         st.markdown(
             f"""
-**Passes Construção** — passes completados cujo **destino** fica **fora da área** \
-(x &lt; {PASS_AGGRESSION_X_MIN:.0f} m no campo StatsBomb 120×80, ou fora da faixa central da grande área). \
-São ações de progressão, circulação e preparação do jogo.
+**Passes Construção** — destino nos primeiros **{FIELD_X - PASS_AGGRESSION_DEPTH:.0f} m** \
+(x &lt; {PASS_AGGRESSION_X_MIN:.0f} m). Circulação, progressão e preparação.
 
-**Passes Agressão** — passes completados cujo **destino** está **dentro da área** \
-(x ≥ {PASS_AGGRESSION_X_MIN:.0f} m e |y − centro| ≤ {PASS_AGGRESSION_Y_HALF_WIDTH:.0f} m). \
-Representam entregas diretas na zona de finalização, cortes e passes para o perigo imediato.
+**Passes Agressão** — destino nos **últimos {PASS_AGGRESSION_DEPTH:.0f} m** do campo \
+(x ≥ {PASS_AGGRESSION_X_MIN:.0f} m até o gol). Entregas na zona de finalização.
 
-A classificação usa apenas a **coordenada de destino** do passe certo, independentemente da origem.
+Progressivos, Impact, High Impact, Σ ΔxT e Σ xT são contados **por zona de destino** \
+do passe completado.
             """
         )
 
@@ -2679,6 +2721,54 @@ def render_construction_aggression_card(
                 _fmt_with_rank(_fmt_count(stats["aggression_passes"]), ranks, "aggression_passes"),
             ),
             ("% construção", _fmt_pct(stats["construction_share_pct"])),
+            (
+                "Prog. Construção",
+                _fmt_with_rank(
+                    _fmt_count(stats["progressive_passes_construction"]),
+                    ranks,
+                    "progressive_passes_construction",
+                ),
+            ),
+            (
+                "Prog. Agressão",
+                _fmt_with_rank(
+                    _fmt_count(stats["progressive_passes_aggression"]),
+                    ranks,
+                    "progressive_passes_aggression",
+                ),
+            ),
+            (
+                "Impact Construção",
+                _fmt_with_rank(
+                    _fmt_count(stats["impact_passes_construction"]),
+                    ranks,
+                    "impact_passes_construction",
+                ),
+            ),
+            (
+                "Impact Agressão",
+                _fmt_with_rank(
+                    _fmt_count(stats["impact_passes_aggression"]),
+                    ranks,
+                    "impact_passes_aggression",
+                ),
+            ),
+            (
+                "High Impact Construção",
+                _fmt_with_rank(
+                    _fmt_count(stats["high_impact_passes_construction"]),
+                    ranks,
+                    "high_impact_passes_construction",
+                ),
+            ),
+            (
+                "High Impact Agressão",
+                _fmt_with_rank(
+                    _fmt_count(stats["high_impact_passes_aggression"]),
+                    ranks,
+                    "high_impact_passes_aggression",
+                ),
+            ),
             (
                 "Σ ΔxT Construção",
                 _fmt_with_rank(_fmt_decimal(stats["sum_dxt_construction"]), ranks, "sum_dxt_construction"),
