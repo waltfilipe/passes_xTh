@@ -73,9 +73,7 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 5
-ALL_TEAMS_LABEL = "Todos os times"
-ALL_POSITIONS_LABEL = "Todas as posições"
+DATA_CACHE_VERSION = 6
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
 DATASET_FILES = (
@@ -83,7 +81,7 @@ DATASET_FILES = (
     (PLAYER_MATCH_STATS_PATH, "player_match_stats.csv", "minutos jogados (SofaScore)"),
 )
 MIN_MINUTES_PCT = 0.35
-RANKING_TOP_N = 15
+RANKING_TOP_N = 20
 DEFAULT_PLAYER_POSITION = "CM"
 PLAYER_TONE_PALETTE = (
     "#5b9bd5", "#e67e22", "#22c55e", "#9333ea", "#dc2626",
@@ -116,10 +114,10 @@ XT_V3_PROG_SCALE = 0.15
 XT_V3_HIGH_SCALE = 0.35
 XT_V3_PROG_FLOOR = 0.08
 XT_V3_HIGH_FLOOR = 0.18
-XT_V3_PROG_SCALE_CLASS = 0.17
-XT_V3_HIGH_SCALE_CLASS = 0.40
-XT_V3_PROG_FLOOR_CLASS = 0.10
-XT_V3_HIGH_FLOOR_CLASS = 0.22
+XT_V3_PROG_SCALE_CLASS = 0.19
+XT_V3_HIGH_SCALE_CLASS = 0.45
+XT_V3_PROG_FLOOR_CLASS = 0.12
+XT_V3_HIGH_FLOOR_CLASS = 0.26
 XT_V3_NEG_PENALTY_FACTOR = 0.55
 XT_V3_PRESSURE_ESCAPE_BONUS = 0.02
 XT_V3_PRESSURE_X_MAX = 50.0
@@ -2636,36 +2634,6 @@ def _pass_player_metrics(
     return metrics
 
 
-def _filter_players_registry(
-    players_registry: list[dict],
-    minutes_info: dict[str, dict],
-    *,
-    teams: list[str] | None = None,
-    positions: list[str] | None = None,
-) -> list[dict]:
-    filtered = players_registry
-    if teams and ALL_TEAMS_LABEL not in teams:
-        team_set = set(teams)
-        filtered = [
-            p for p in filtered
-            if minutes_info.get(p["code"], {}).get("team") in team_set
-        ]
-    if positions and ALL_POSITIONS_LABEL not in positions:
-        pos_set = set(positions)
-        filtered = [p for p in filtered if p.get("position") in pos_set]
-    return filtered
-
-
-def _available_teams(minutes_info: dict[str, dict]) -> list[str]:
-    teams = sorted({str(v["team"]) for v in minutes_info.values() if v.get("team")})
-    return [ALL_TEAMS_LABEL, *teams]
-
-
-def _available_positions(players_registry: list[dict]) -> list[str]:
-    positions = sorted({str(p.get("position")) for p in players_registry if p.get("position")})
-    return [ALL_POSITIONS_LABEL, *positions]
-
-
 def _build_ranking_players(
     player_data: dict[str, pd.DataFrame],
     players_registry: list[dict],
@@ -4506,8 +4474,8 @@ with st.sidebar:
     st.markdown(
         """
         <div style="text-align:center;">
-          <h3 style="margin:0;color:#eef1f7;">Filtros</h3>
-          <p style="color:#94a3b8;font-size:0.85rem;">Time · posição · jogador</p>
+          <h3 style="margin:0;color:#eef1f7;">Passes xT</h3>
+          <p style="color:#94a3b8;font-size:0.85rem;">Brasileirão 2026</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4516,43 +4484,13 @@ with st.sidebar:
         f"{len(players_registry)} jogadores · "
         f"{sum(len(df) for df in player_data.values()):,} passes · xT v4"
     )
-    team_options = _available_teams(minutes_info)
-    position_options = _available_positions(players_registry)
-    selected_teams = st.multiselect(
-        "Time",
-        options=team_options,
-        default=[ALL_TEAMS_LABEL],
-        help="Filtre por time. Mantenha «Todos os times» para ver todos.",
-    )
-    selected_positions = st.multiselect(
-        "Posição",
-        options=position_options,
-        default=[ALL_POSITIONS_LABEL],
-        help="Filtre por posição. Mantenha «Todas as posições» para ver todos.",
-    )
-    if not selected_teams:
-        selected_teams = [ALL_TEAMS_LABEL]
-    if not selected_positions:
-        selected_positions = [ALL_POSITIONS_LABEL]
     with st.expander("Arquivos de dados", expanded=False):
         for line in _dataset_file_lines():
             st.markdown(line)
 
-filtered_registry = _filter_players_registry(
-    players_registry,
-    minutes_info,
-    teams=selected_teams,
-    positions=selected_positions,
-)
-full_registry = _filter_players_registry(
-    players_registry,
-    minutes_info,
-    teams=[ALL_TEAMS_LABEL],
-    positions=[ALL_POSITIONS_LABEL],
-)
 rank_pool = _build_ranking_players(
     player_data,
-    full_registry,
+    players_registry,
     box_stats=box_stats,
     minutes_info=minutes_info,
 )
@@ -4564,7 +4502,7 @@ tab_analysis, tab_ranking = st.tabs(
 with tab_analysis:
     render_analysis_tab(
         player_data,
-        filtered_registry,
+        players_registry,
         minutes_info=minutes_info,
         box_stats=box_stats,
         rank_pool=rank_pool,
@@ -4573,7 +4511,7 @@ with tab_analysis:
 with tab_ranking:
     render_ranking_tab(
         player_data,
-        filtered_registry,
+        players_registry,
         minutes_info=minutes_info,
         box_stats=box_stats,
     )
