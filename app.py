@@ -73,7 +73,7 @@ ARROW_HEADLENGTH = 1.15
 ARROW_ALPHA = 0.68
 ARROW_ALPHA_EMPH = 0.82
 ALL_GAMES_LABEL = "todos os jogos"
-DATA_CACHE_VERSION = 1
+DATA_CACHE_VERSION = 2
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
 DATASET_FILES = (
@@ -125,6 +125,9 @@ XT_V3_WIDE_FRAC = 0.60
 XT_V3_NEG_RECYCLE_X_MAX = 60.0
 XT_V4_BOX_X_START = 90.0
 XT_V4_BOX_X_FULL = 112.0
+# Zona de agressão: destino do passe dentro da área (StatsBomb 120×80)
+PASS_AGGRESSION_X_MIN = XT_V4_BOX_X_START
+PASS_AGGRESSION_Y_HALF_WIDTH = 22.0
 XT_V4_CORNER_LAT_ON = 0.58
 XT_V4_CORNER_PENALTY = 0.10
 XT_V4_CENTRAL_PREMIUM = 0.06
@@ -278,6 +281,18 @@ def is_progressive_wyscout(x_start: float, y_start: float, x_end: float, y_end: 
     if start_opp and end_opp:
         return progress >= WYSCOUT_PROG_OPP_HALF
     return progress >= WYSCOUT_PROG_CROSS_HALF
+
+
+def is_aggression_pass_end(x_end: float, y_end: float) -> bool:
+    """Passe de agressão: destino dentro da área (zona de finalização)."""
+    if x_end < PASS_AGGRESSION_X_MIN:
+        return False
+    return abs(y_end - GOAL_Y) <= PASS_AGGRESSION_Y_HALF_WIDTH
+
+
+def is_construction_pass_end(x_end: float, y_end: float) -> bool:
+    """Passe de construção: destino fora da área."""
+    return not is_aggression_pass_end(x_end, y_end)
 
 
 def _parse_bool(value) -> bool:
@@ -1651,6 +1666,15 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
             "xt_per_prog_pass": 0.0,
             "xt_per_impact_pass": 0.0,
             "xt_per_long_ball": 0.0,
+            "construction_passes": 0,
+            "aggression_passes": 0,
+            "sum_dxt_construction": 0.0,
+            "sum_dxt_aggression": 0.0,
+            "sum_xt_end_construction": 0.0,
+            "sum_xt_end_aggression": 0.0,
+            "dxt_per_construction_pass": 0.0,
+            "dxt_per_aggression_pass": 0.0,
+            "construction_share_pct": 0.0,
             "by_action_type": df.groupby("action_type").size().to_dict() if not df.empty else {},
         }
 
@@ -1740,6 +1764,39 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         float(impact_success[end_col].sum()) if not impact_success.empty else 0.0
     )
 
+    construction_completed = completed_passes[
+        completed_passes.apply(
+            lambda r: is_construction_pass_end(r.x_end, r.y_end), axis=1
+        )
+    ]
+    aggression_completed = completed_passes[
+        completed_passes.apply(
+            lambda r: is_aggression_pass_end(r.x_end, r.y_end), axis=1
+        )
+    ]
+    construction_all = passes[
+        passes["has_end"]
+        & passes.apply(lambda r: is_construction_pass_end(r.x_end, r.y_end), axis=1)
+    ]
+    aggression_all = passes[
+        passes["has_end"]
+        & passes.apply(lambda r: is_aggression_pass_end(r.x_end, r.y_end), axis=1)
+    ]
+    construction_success = construction_all[construction_all["is_success"]]
+    aggression_success = aggression_all[aggression_all["is_success"]]
+    sum_dxt_construction = float(construction_all[delta_col].sum())
+    sum_dxt_aggression = float(aggression_all[delta_col].sum())
+    sum_xt_end_construction = (
+        float(construction_completed[end_col].sum())
+        if not construction_completed.empty
+        else 0.0
+    )
+    sum_xt_end_aggression = (
+        float(aggression_completed[end_col].sum())
+        if not aggression_completed.empty
+        else 0.0
+    )
+
     return {
         **general,
         "accuracy_pct": accuracy,
@@ -1764,6 +1821,23 @@ def compute_player_stats(df: pd.DataFrame, variant: str | None = None) -> dict:
         "xt_per_prog_pass": _safe_ratio(float(prog_success[delta_col].sum()), len(prog_success)),
         "xt_per_impact_pass": _safe_ratio(sum_xt_end_impact_passes, len(impact_success)),
         "xt_per_long_ball": _safe_ratio(sum_xt_end_long_balls, len(completed_long_balls)),
+        "construction_passes": int(len(construction_success)),
+        "aggression_passes": int(len(aggression_success)),
+        "sum_dxt_construction": sum_dxt_construction,
+        "sum_dxt_aggression": sum_dxt_aggression,
+        "sum_xt_end_construction": sum_xt_end_construction,
+        "sum_xt_end_aggression": sum_xt_end_aggression,
+        "dxt_per_construction_pass": _safe_ratio(
+            sum_dxt_construction, len(construction_success)
+        ),
+        "dxt_per_aggression_pass": _safe_ratio(
+            sum_dxt_aggression, len(aggression_success)
+        ),
+        "construction_share_pct": round(
+            len(construction_success) / len(completed_passes) * 100.0, 1
+        )
+        if len(completed_passes)
+        else 0.0,
         "by_action_type": df.groupby("action_type").size().to_dict(),
     }
 
@@ -2318,6 +2392,14 @@ def _pass_player_metrics(
         "xt_per_pass": round(stats["xt_per_pass"], 4),
         "xt_per_impact_pass": round(stats["xt_per_impact_pass"], 4),
         "pos_pct": round(stats["pos_pct"], 1),
+        "construction_passes": int(stats["construction_passes"]),
+        "aggression_passes": int(stats["aggression_passes"]),
+        "sum_dxt_construction": round(stats["sum_dxt_construction"], 3),
+        "sum_dxt_aggression": round(stats["sum_dxt_aggression"], 3),
+        "sum_xt_end_construction": round(stats["sum_xt_end_construction"], 3),
+        "sum_xt_end_aggression": round(stats["sum_xt_end_aggression"], 3),
+        "dxt_per_construction_pass": round(stats["dxt_per_construction_pass"], 4),
+        "dxt_per_aggression_pass": round(stats["dxt_per_aggression_pass"], 4),
     }
 
 
@@ -2349,13 +2431,63 @@ RANKING_METRICS: tuple[tuple[str, str, str], ...] = (
     ("progressive_passes", "Passes Progressivos", _fmt_count),
     ("impact_passes", "Passes Impact", _fmt_count),
     ("high_impact_passes", "Passes High Impact", _fmt_count),
+    ("construction_passes", "Passes Construção", _fmt_count),
+    ("aggression_passes", "Passes Agressão", _fmt_count),
     ("sum_dxt_passes", "Σ ΔxT (passes)", _fmt_decimal),
     ("sum_xt_end_passes", "Σ xT (passes)", _fmt_decimal),
+    ("sum_dxt_construction", "Σ ΔxT Construção", _fmt_decimal),
+    ("sum_dxt_aggression", "Σ ΔxT Agressão", _fmt_decimal),
+    ("sum_xt_end_construction", "Σ xT Construção", _fmt_decimal),
+    ("sum_xt_end_aggression", "Σ xT Agressão", _fmt_decimal),
     ("dxt_per_pass", "ΔxT / passe", _fmt_decimal),
     ("xt_per_pass", "xT / passe", _fmt_decimal),
+    ("dxt_per_construction_pass", "ΔxT / passe construção", _fmt_decimal),
+    ("dxt_per_aggression_pass", "ΔxT / passe agressão", _fmt_decimal),
     ("key_passes", "Key Passes", _fmt_count),
     ("passes_accuracy_pct", "% acerto passes", _fmt_pct),
 )
+
+RANKING_METRIC_KEYS: tuple[str, ...] = tuple(m[0] for m in RANKING_METRICS)
+
+
+def _compute_position_ranks(players: list[dict]) -> dict[str, dict[str, int]]:
+    """player_id -> metric_key -> rank (1-based) within position_group."""
+    by_group: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
+    for player in players:
+        group = player.get("position_group")
+        if group in by_group:
+            by_group[group].append(player)
+
+    ranks: dict[str, dict[str, int]] = {}
+    for group_players in by_group.values():
+        if not group_players:
+            continue
+        for key in RANKING_METRIC_KEYS:
+            ordered = sorted(
+                group_players,
+                key=lambda p: p.get(key, 0) or 0,
+                reverse=True,
+            )
+            for rank, player in enumerate(ordered, start=1):
+                pid = player["player_id"]
+                ranks.setdefault(pid, {})[key] = rank
+    return ranks
+
+
+def _fmt_with_rank(
+    value: str,
+    ranks: dict[str, int] | None,
+    metric_key: str | None,
+) -> str:
+    if not ranks or not metric_key:
+        return value
+    rank = ranks.get(metric_key)
+    if rank is None:
+        return value
+    return (
+        f'{value} <span style="color:#94a3b8;font-size:0.78em;font-weight:600;">'
+        f"(#{rank})</span>"
+    )
 
 
 def _ranking_table(
@@ -2413,6 +2545,21 @@ def render_ranking_tab(
         return
 
     st.caption(f"{len(players)} jogadores elegíveis · top {RANKING_TOP_N} por métrica e grupo")
+
+    with st.expander("Construção vs Agressão — como classificamos", expanded=False):
+        st.markdown(
+            f"""
+**Passes Construção** — passes completados cujo **destino** fica **fora da área** \
+(x &lt; {PASS_AGGRESSION_X_MIN:.0f} m no campo StatsBomb 120×80, ou fora da faixa central da grande área). \
+São ações de progressão, circulação e preparação do jogo.
+
+**Passes Agressão** — passes completados cujo **destino** está **dentro da área** \
+(x ≥ {PASS_AGGRESSION_X_MIN:.0f} m e |y − centro| ≤ {PASS_AGGRESSION_Y_HALF_WIDTH:.0f} m). \
+Representam entregas diretas na zona de finalização, cortes e passes para o perigo imediato.
+
+A classificação usa apenas a **coordenada de destino** do passe certo, independentemente da origem.
+            """
+        )
 
     by_group: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
     for player in players:
@@ -2492,18 +2639,78 @@ def stats_section_card(title: str, border_color: str, items: list[tuple[str, str
     st.markdown(_stats_card_shell_html(title, border_color, inner), unsafe_allow_html=True)
 
 
-def render_actions_stats_card(stats: dict, tone: str) -> None:
+def render_actions_stats_card(
+    stats: dict, tone: str, ranks: dict[str, int] | None = None,
+) -> None:
     """Pass totals from coordinate data."""
     stats_section_card(
         "Passes (coordenadas)",
         tone,
         [
-            ("Passes", _fmt_count(stats["passes_total"])),
-            ("Passes completados", _fmt_count(stats["passes_completed"])),
-            ("% acerto passes", _fmt_pct(stats["passes_accuracy_pct"])),
-            ("Key passes", _fmt_count(stats["key_passes"])),
+            ("Passes", _fmt_with_rank(_fmt_count(stats["passes_total"]), ranks, None)),
+            (
+                "Passes completados",
+                _fmt_with_rank(_fmt_count(stats["passes_completed"]), ranks, "passes_completed"),
+            ),
+            (
+                "% acerto passes",
+                _fmt_with_rank(_fmt_pct(stats["passes_accuracy_pct"]), ranks, "passes_accuracy_pct"),
+            ),
+            ("Key passes", _fmt_with_rank(_fmt_count(stats["key_passes"]), ranks, "key_passes")),
             ("Crosses", _fmt_count(stats["crosses"])),
             ("Bolas longas", _fmt_count(stats["long_balls"])),
+        ],
+    )
+
+
+def render_construction_aggression_card(
+    stats: dict, tone: str, ranks: dict[str, int] | None = None,
+) -> None:
+    stats_section_card(
+        "Construção vs Agressão",
+        tone,
+        [
+            (
+                "Passes Construção",
+                _fmt_with_rank(_fmt_count(stats["construction_passes"]), ranks, "construction_passes"),
+            ),
+            (
+                "Passes Agressão",
+                _fmt_with_rank(_fmt_count(stats["aggression_passes"]), ranks, "aggression_passes"),
+            ),
+            ("% construção", _fmt_pct(stats["construction_share_pct"])),
+            (
+                "Σ ΔxT Construção",
+                _fmt_with_rank(_fmt_decimal(stats["sum_dxt_construction"]), ranks, "sum_dxt_construction"),
+            ),
+            (
+                "Σ ΔxT Agressão",
+                _fmt_with_rank(_fmt_decimal(stats["sum_dxt_aggression"]), ranks, "sum_dxt_aggression"),
+            ),
+            (
+                "Σ xT Construção",
+                _fmt_with_rank(_fmt_decimal(stats["sum_xt_end_construction"]), ranks, "sum_xt_end_construction"),
+            ),
+            (
+                "Σ xT Agressão",
+                _fmt_with_rank(_fmt_decimal(stats["sum_xt_end_aggression"]), ranks, "sum_xt_end_aggression"),
+            ),
+            (
+                "ΔxT / passe construção",
+                _fmt_with_rank(
+                    _fmt_decimal(stats["dxt_per_construction_pass"], decimals=3),
+                    ranks,
+                    "dxt_per_construction_pass",
+                ),
+            ),
+            (
+                "ΔxT / passe agressão",
+                _fmt_with_rank(
+                    _fmt_decimal(stats["dxt_per_aggression_pass"], decimals=3),
+                    ranks,
+                    "dxt_per_aggression_pass",
+                ),
+            ),
         ],
     )
 
@@ -2564,7 +2771,9 @@ def render_general_stats_card(stats: dict, tone: str) -> None:
     render_actions_stats_card(stats, tone)
 
 
-def render_impact_card(stats: dict, tone: str) -> None:
+def render_impact_card(
+    stats: dict, tone: str, ranks: dict[str, int] | None = None,
+) -> None:
     impact = stats["impact_pass"]
     high_impact = stats["high_impact_pass"]
     prog = stats["progressive_wyscout"]
@@ -2572,25 +2781,48 @@ def render_impact_card(stats: dict, tone: str) -> None:
         "Impact (xT v4)",
         tone,
         [
-            ("Pass Impact (Σ ΔxT)", _fmt_decimal(stats["sum_dxt_passes"])),
-            ("Σ xT final passes", _fmt_decimal(stats["sum_xt_end_passes"])),
+            (
+                "Pass Impact (Σ ΔxT)",
+                _fmt_with_rank(_fmt_decimal(stats["sum_dxt_passes"]), ranks, "sum_dxt_passes"),
+            ),
+            (
+                "Σ xT final passes",
+                _fmt_with_rank(_fmt_decimal(stats["sum_xt_end_passes"]), ranks, "sum_xt_end_passes"),
+            ),
             ("ΔxT campo ofensivo", _fmt_decimal(stats["sum_dxt_passes_offensive"])),
             ("Σ xT terço final", _fmt_decimal(stats["sum_xt_end_final_third"])),
-            ("Passes Progressivos", _fmt_count(prog["successful"])),
-            ("Impact Passes", _fmt_count(impact["successful"])),
-            ("High Impact Passes", _fmt_count(high_impact["successful"])),
+            (
+                "Passes Progressivos",
+                _fmt_with_rank(_fmt_count(prog["successful"]), ranks, "progressive_passes"),
+            ),
+            (
+                "Impact Passes",
+                _fmt_with_rank(_fmt_count(impact["successful"]), ranks, "impact_passes"),
+            ),
+            (
+                "High Impact Passes",
+                _fmt_with_rank(_fmt_count(high_impact["successful"]), ranks, "high_impact_passes"),
+            ),
             ("% ΔxT positivo", _fmt_pct(stats["pos_pct"])),
         ],
     )
 
 
-def render_xt_efficiency_card(stats: dict, tone: str) -> None:
+def render_xt_efficiency_card(
+    stats: dict, tone: str, ranks: dict[str, int] | None = None,
+) -> None:
     stats_section_card(
         "Eficiência xT (v4)",
         tone,
         [
-            ("Σ xT / passe completado", _fmt_decimal(stats["xt_per_pass"], decimals=3)),
-            ("Σ ΔxT / passe completado", _fmt_decimal(stats["dxt_per_pass"], decimals=3)),
+            (
+                "Σ xT / passe completado",
+                _fmt_with_rank(_fmt_decimal(stats["xt_per_pass"], decimals=3), ranks, "xt_per_pass"),
+            ),
+            (
+                "Σ ΔxT / passe completado",
+                _fmt_with_rank(_fmt_decimal(stats["dxt_per_pass"], decimals=3), ranks, "dxt_per_pass"),
+            ),
             (
                 "Σ xT terço final / passe compl. terço final",
                 _fmt_decimal(stats["xt_per_pass_final_third"], decimals=3),
@@ -2928,8 +3160,10 @@ def draw_shots_map(shots_df: pd.DataFrame, player_name: str, match_label: str):
 def draw_pass_destination_heatmap(
     df: pd.DataFrame, player_name: str, match_label: str, *, impact_only: bool = False,
 ):
-    """6×4 heatmap of pass end locations on the pitch."""
-    passes = df[(df["category"] == "passes") & df["has_end"]].copy()
+    """6×4 heatmap of completed pass end locations on the pitch."""
+    passes = df[
+        (df["category"] == "passes") & df["has_end"] & df["is_success"].astype(bool)
+    ].copy()
     if impact_only:
         passes = passes[passes["impact_pass"].astype(bool)]
     fig, ax, pitch = _base_pitch()
@@ -2989,7 +3223,7 @@ def draw_pass_destination_heatmap(
     cbar.set_label("Passes", color="#c7cdda", fontsize=7 * scale)
     title_suffix = " · Impact" if impact_only else ""
     ax.set_title(
-        f"{player_name}\nDestino dos passes · 6×4{title_suffix} · {match_label}",
+        f"{player_name}\nDestino dos passes (completados) · 6×4{title_suffix} · {match_label}",
         color="white", fontsize=9.2 * scale, pad=5,
     )
     _attack_arrow(fig, has_cbar=True)
@@ -3210,16 +3444,26 @@ def _player_selector(key: str, players_registry: list[dict]) -> dict:
     return next(p for p in filtered if p["name"] == name)
 
 
-def render_player_stats_cards(stats: dict) -> None:
-    """Render pass volume, impact and xT efficiency cards."""
+def render_player_stats_cards(
+    stats: dict,
+    *,
+    position_ranks: dict[str, int] | None = None,
+    position_group: str | None = None,
+) -> None:
+    """Render pass volume, construction/aggression, impact and xT efficiency cards."""
+    rank_label = f" · ranking no grupo {position_group}" if position_group else ""
+    if position_ranks:
+        st.caption(f"Valores com **(#N)** = posição no grupo de posição{rank_label}.")
     row1 = st.columns(2)
     with row1[0]:
-        render_actions_stats_card(stats, STAT_CARD_GENERAL_COLOR)
+        render_actions_stats_card(stats, STAT_CARD_GENERAL_COLOR, position_ranks)
     with row1[1]:
-        render_impact_card(stats, STAT_CARD_IMPACT_COLOR)
-    row2 = st.columns(1)
+        render_construction_aggression_card(stats, STAT_CARD_ATTACK_COLOR, position_ranks)
+    row2 = st.columns(2)
     with row2[0]:
-        render_xt_efficiency_card(stats, STAT_CARD_XT_COLOR)
+        render_impact_card(stats, STAT_CARD_IMPACT_COLOR, position_ranks)
+    with row2[1]:
+        render_xt_efficiency_card(stats, STAT_CARD_XT_COLOR, position_ranks)
 
 
 def render_analysis_tab(
@@ -3273,7 +3517,17 @@ def render_analysis_tab(
     stats = _merge_box_stats(
         compute_player_stats(df), player["code"], box_stats
     )
-    render_player_stats_cards(stats)
+    ranking_pool = _build_ranking_players(
+        player_data, players_registry, box_stats=box_stats, minutes_info=minutes_info
+    )
+    all_ranks = _compute_position_ranks(ranking_pool)
+    player_ranks = all_ranks.get(player["code"])
+    pos_group = position_group(player.get("position"))
+    render_player_stats_cards(
+        stats,
+        position_ranks=player_ranks,
+        position_group=pos_group,
+    )
 
 
 def render_xt_model_comparison(
