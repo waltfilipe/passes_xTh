@@ -171,7 +171,7 @@ def render_impact_map(players: list[dict], passes_by_player: dict) -> None:
 
 def main() -> None:
     with st.spinner("Carregando dados…"):
-        players, _ = load_analytics()
+        _, players = load_analytics()
         passes_by_player = load_passes()
 
     render_rating_section(players)
