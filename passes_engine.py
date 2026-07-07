@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import colorsys
 import sys
 from pathlib import Path
 
@@ -688,6 +689,29 @@ def compute_player_metrics(passes: pd.DataFrame, minutes_info: dict) -> dict:
     stats = {**_pass_layer_metrics(passes), **_long_ball_stats(passes)}
     minutes = minutes_info.get("minutes")
     return _derive_rates(stats, minutes)
+
+
+def rank_to_display_score(rank: int, pool_size: int) -> float:
+    """Convert position rank to display score (3.0–9.0)."""
+    return _rank_to_rating_score(rank, pool_size) * 10.0
+
+
+def score_display_color(display_score: float) -> str:
+    """Green (9) → yellow (6) → red (3)."""
+    import colorsys
+
+    score = max(3.0, min(9.0, float(display_score)))
+    if score >= 6.0:
+        t = (score - 6.0) / 3.0
+        hue = (52.0 + t * 88.0) / 360.0
+    else:
+        t = (score - 3.0) / 3.0
+        hue = (t * 52.0) / 360.0
+    position = (9.0 - score) / 6.0
+    lightness = 0.40 + position * 0.12
+    saturation = 0.48 + position * 0.22
+    red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
+    return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
 def _rank_to_rating_score(rank: int, pool_size: int) -> float:

@@ -160,7 +160,7 @@ def draw_pass_destination_heatmap(
     *,
     compact: bool = True,
 ):
-    """12×8 heatmap of completed pass end locations."""
+    """12×8 heatmap of completed impact pass end locations."""
     if compact:
         figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
         dpi = FIG_DPI_COMPACT
@@ -170,7 +170,7 @@ def draw_pass_destination_heatmap(
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
-    completed = passes[passes["has_end"] & passes["is_success"]].copy()
+    completed = passes[passes["impact_success"] & passes["has_end"]].copy()
     fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
 
     x_bins = np.linspace(0.0, FIELD_X, PASS_DEST_HEATMAP_COLS + 1)
@@ -216,9 +216,9 @@ def draw_pass_destination_heatmap(
     cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
     cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
     plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-    cbar.set_label("Passes", color="#c7cdda", fontsize=7 * scale)
+    cbar.set_label("Passes impact", color="#c7cdda", fontsize=7 * scale)
     ax.set_title(
-        f"{player_name}\nDestino dos passes · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
+        f"{player_name}\nDestino — passes impact · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
         color="white", fontsize=8.2 * scale, pad=5,
     )
     _attack_arrow(fig, fig_w=fig_w)

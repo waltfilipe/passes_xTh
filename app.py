@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import colorsys
 import html
 import sys
 import unicodedata
@@ -35,6 +34,8 @@ fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
 load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
+rank_to_display_score = pe.rank_to_display_score
+score_display_color = pe.score_display_color
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -47,20 +48,47 @@ st.set_page_config(page_title="Passes xTh", layout="wide")
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.25rem; max-width: 1180px; }
+    .block-container { padding-top: 1.25rem; max-width: 1400px; }
     .player-card {
         background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
         border: 1px solid #2a3550;
         border-radius: 12px;
         padding: 1rem 1.1rem;
-        margin-top: 0.2rem;
+        margin-bottom: 0.65rem;
     }
-    .player-card + .player-card { margin-top: 0; }
+    .player-header-card {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem 1.5rem;
+    }
+    .player-header-main { flex: 1 1 220px; min-width: 0; }
+    .player-header-rating { flex: 0 0 auto; }
+    .player-header-stats {
+        flex: 1 1 280px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem 1.25rem;
+        justify-content: flex-end;
+    }
+    .header-stat {
+        font-size: 0.84rem;
+        color: #94a3b8;
+        white-space: nowrap;
+    }
+    .header-stat strong {
+        display: block;
+        color: #f8fafc;
+        font-size: 1.02rem;
+        font-weight: 700;
+        margin-top: 0.1rem;
+    }
     .rating-row {
         display: flex;
         align-items: center;
         gap: 0.55rem;
-        margin-bottom: 0.85rem;
+        margin-bottom: 0;
     }
     .rating-warning-tip {
         position: relative;
@@ -75,7 +103,7 @@ st.markdown(
         filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.35));
     }
     .player-card h3 { margin: 0 0 0.15rem 0; color: #f1f5f9; font-size: 1.15rem; }
-    .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem; }
+    .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0; }
     .player-card .rating-box {
         display: inline-flex;
         align-items: center;
@@ -86,7 +114,7 @@ st.markdown(
         border-radius: 8px;
         font-size: 1.55rem;
         font-weight: 800;
-        margin-bottom: 0.85rem;
+        margin-bottom: 0;
         border: 1px solid rgba(255,255,255,0.16);
         letter-spacing: 0.02em;
     }
@@ -197,16 +225,14 @@ def _norm(s: str) -> str:
 
 
 def rank_color(rank: int, total: int) -> str:
-    """Pastel gradient: dark green (best) → strong red (worst)."""
-    if total <= 1:
-        return "#8fbf9f"
-    t = (rank - 1) / (total - 1)
-    t = min(1.0, max(0.0, t)) ** 1.15
-    hue = (1.0 - t) * (145.0 / 360.0)
-    lightness = 0.40 + t * 0.12
-    saturation = 0.48 + t * 0.22
-    red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
-    return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
+    """Score-based gradient: 9 green → 6 yellow → 3 red."""
+    return score_display_color(rank_to_display_score(rank, total))
+
+
+def rating_value_color(pass_rating: float | None) -> str:
+    if pass_rating is None:
+        return "#334155"
+    return score_display_color(float(pass_rating) * 10.0)
 
 
 def _player_options(rated: list[dict]) -> list[tuple[str, str, str, str]]:
@@ -406,7 +432,7 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     rating_info = metric_ranks.get("pass_rating") if eligible else None
 
     if rating_info:
-        r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
+        r_color = rating_value_color(rating_val)
         r_txt = _badge_text_color(r_color)
         rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
         rating_box = (
@@ -434,12 +460,38 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     return f'<div class="rating-row">{rating_box}{warning}</div>'
 
 
-def render_player_card(player: dict) -> None:
-    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
-    rating_html = _rating_header_html(player, metric_ranks)
+def _header_stat_html(label: str, value: str) -> str:
+    return (
+        '<div class="header-stat">'
+        f"{html.escape(label)}"
+        f"<strong>{html.escape(value)}</strong>"
+        "</div>"
+    )
 
-    main_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
+
+def render_player_header_card(player: dict) -> None:
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    general_html = "".join(
+        _header_stat_html(metric_label(key), _stat_display(player, key))
+        for key in ("minutes", "passes_completed", "minutes_pct")
+    )
+    card = (
+        '<div class="player-card player-header-card">'
+        '<div class="player-header-main">'
+        f"<h3>{html.escape(player['player_name'])}</h3>"
+        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
+        "</div>"
+        f'<div class="player-header-rating">{_rating_header_html(player, metric_ranks)}</div>'
+        f'<div class="player-header-stats">{general_html}</div>'
+        "</div>"
+    )
+    st.markdown(card, unsafe_allow_html=True)
+
+
+def render_player_metric_cards(player: dict) -> None:
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+
+    metrics_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
         ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
         ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
@@ -449,12 +501,9 @@ def render_player_card(player: dict) -> None:
         ("Agressão", "aggression", AGGRESSION_METRIC_KEYS, True),
     ]
 
-    card_main = (
+    card_metrics = (
         '<div class="player-card">'
-        f"<h3>{html.escape(player['player_name'])}</h3>"
-        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f"{rating_html}"
-        + _build_sections_html(player, metric_ranks, main_sections)
+        + _build_sections_html(player, metric_ranks, metrics_sections)
         + "</div>"
     )
     card_style = (
@@ -462,9 +511,9 @@ def render_player_card(player: dict) -> None:
         + _build_sections_html(player, metric_ranks, style_sections)
         + "</div>"
     )
-    col_main, col_style = st.columns(2, gap="small")
-    with col_main:
-        st.markdown(card_main, unsafe_allow_html=True)
+    col_metrics, col_style = st.columns(2, gap="small")
+    with col_metrics:
+        st.markdown(card_metrics, unsafe_allow_html=True)
     with col_style:
         st.markdown(card_style, unsafe_allow_html=True)
 
@@ -510,19 +559,22 @@ def render_map_section(
     player = players_by_id[player_id]
     passes = passes_by_player.get(player_id)
 
-    col_map, col_info = st.columns([1.35, 1.0], gap="large")
-    with col_map:
-        if passes is None or passes.empty:
+    render_player_header_card(player)
+
+    col_impact, col_heat = st.columns(2, gap="small")
+    if passes is None or passes.empty:
+        with col_impact:
             st.warning("Sem passes de impacto para este jogador.")
-        else:
-            fig = draw_impact_pass_map(passes, player["player_name"], player.get("team", "—"))
-            st.pyplot(fig, clear_figure=True, use_container_width=False)
-            fig_heat = draw_pass_destination_heatmap(
-                passes, player["player_name"], player.get("team", "—"),
-            )
-            st.pyplot(fig_heat, clear_figure=True, use_container_width=False)
-    with col_info:
-        render_player_card(player)
+    else:
+        team_label = player.get("team", "—")
+        with col_impact:
+            fig = draw_impact_pass_map(passes, player["player_name"], team_label)
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        with col_heat:
+            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label)
+            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+
+    render_player_metric_cards(player)
 
 
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
