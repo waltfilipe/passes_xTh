@@ -38,7 +38,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 22
+DATA_CACHE_VERSION = 23
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -67,9 +67,13 @@ IMPACT_PASS_MIN_GOAL_APPROACH_FINAL_THIRD = 5.0
 IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 
 # ── xT v4 classification thresholds ─────────────────────────────────────────
+# Impact tiers use relative gain: ΔxT / (1 − xT_start) — option 5 calibration.
+IMPACT_REL_GAIN_MIN_HEADROOM = 0.05
+IMPACT_REL_GAIN_TIER1 = 0.30
+IMPACT_REL_GAIN_TIER2 = 0.62
+# Legacy absolute thresholds (unused for impact tier; kept for reference tooling).
 XT_V3_PROG_FLOOR_CLASS = 0.12
 XT_V3_PROG_SCALE_CLASS = 0.19
-# Pass impact (tier 1) is 5% stricter; high impact (tier 2) unchanged.
 IMPACT_PROG_STRICTNESS = 1.05
 XT_V3_HIGH_FLOOR_CLASS = 0.26
 XT_V3_HIGH_SCALE_CLASS = 0.45
@@ -374,15 +378,19 @@ def _adjust_delta_v4(
 
 
 def _impact_tier_vec(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
-    """0 = none, 1 = progressive, 2 = highly."""
+    """0 = none, 1 = impact, 2 = high impact.
+
+    Relative threat gain: ΔxT / (1 − xT_start). Defensive passes need a larger
+    share of remaining headroom to qualify as impact.
+    """
     tier = np.zeros(len(delta_xt), dtype=np.int8)
-    pos = delta_xt > 0
+    headroom = np.maximum(1.0 - xt_start, IMPACT_REL_GAIN_MIN_HEADROOM)
+    rel_gain = delta_xt / headroom
+    pos = rel_gain > 0
     if not pos.any():
         return tier
-    prog = np.maximum(XT_V3_PROG_FLOOR_CLASS, XT_V3_PROG_SCALE_CLASS * (1.0 - xt_start)) * IMPACT_PROG_STRICTNESS
-    high = np.maximum(XT_V3_HIGH_FLOOR_CLASS, XT_V3_HIGH_SCALE_CLASS * (1.0 - xt_start))
-    tier[pos & (delta_xt > prog) & (delta_xt <= high)] = 1
-    tier[pos & (delta_xt > high)] = 2
+    tier[pos & (rel_gain > IMPACT_REL_GAIN_TIER1) & (rel_gain <= IMPACT_REL_GAIN_TIER2)] = 1
+    tier[pos & (rel_gain > IMPACT_REL_GAIN_TIER2)] = 2
     return tier
 
 
