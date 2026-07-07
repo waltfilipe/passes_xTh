@@ -24,6 +24,8 @@ DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
 ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
 RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
+CONSTRUCTION_METRIC_KEYS = pe.CONSTRUCTION_METRIC_KEYS
+AGGRESSION_METRIC_KEYS = pe.AGGRESSION_METRIC_KEYS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 build_analytics = pe.build_analytics
@@ -37,7 +39,7 @@ metric_label = pe.metric_label
 def fmt_rating_score(pass_rating) -> str:
     if pass_rating is None:
         return "—"
-    return f"{float(pass_rating) * 10.0:.2f}"
+    return f"{float(pass_rating) * 10.0:.1f}"
 
 st.set_page_config(page_title="Passes xTh", layout="wide")
 
@@ -52,6 +54,7 @@ st.markdown(
         padding: 1rem 1.1rem;
         margin-top: 0.2rem;
     }
+    .player-card + .player-card { margin-top: 0.65rem; }
     .player-card h3 { margin: 0 0 0.15rem 0; color: #f1f5f9; font-size: 1.15rem; }
     .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem; }
     .player-card .rating-box {
@@ -343,38 +346,21 @@ def _section_header_html(title: str, section_key: str, player: dict) -> str:
     )
 
 
-def render_player_card(player: dict) -> None:
-    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
-    rating_txt = fmt_rating_score(player.get("pass_rating", 0))
-    rating_info = metric_ranks.get("pass_rating")
-    if rating_info:
-        r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
-        r_txt = _badge_text_color(r_color)
-        rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
-        rating_html = (
-            f'<span class="rating-tip">'
-            f'<div class="rating-box" style="background:{r_color};color:{r_txt}">'
-            f"{html.escape(rating_txt)}</div>"
-            f'<span class="rating-tipbox">{rank_txt}</span>'
-            f"</span>"
-        )
-    else:
-        rating_html = f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
-
-    sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
-        ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
-        ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
-        ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
-    ]
-    metrics_html = []
+def _build_sections_html(
+    player: dict,
+    metric_ranks: dict,
+    sections: list[tuple[str, str | None, tuple[str, ...], bool]],
+) -> str:
+    parts: list[str] = []
     for title, section_key, keys, show_rank in sections:
         if section_key:
-            metrics_html.append(_section_header_html(title, section_key, player))
+            parts.append(_section_header_html(title, section_key, player))
         else:
-            metrics_html.append(f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>')
+            parts.append(
+                f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>'
+            )
         for key in keys:
-            metrics_html.append(
+            parts.append(
                 _metric_line_html(
                     metric_label(key),
                     key,
@@ -383,16 +369,55 @@ def render_player_card(player: dict) -> None:
                     show_rank=show_rank,
                 )
             )
+    return "".join(parts)
 
-    card = (
+
+def _rating_header_html(player: dict, metric_ranks: dict) -> str:
+    rating_txt = fmt_rating_score(player.get("pass_rating", 0))
+    rating_info = metric_ranks.get("pass_rating")
+    if rating_info:
+        r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
+        r_txt = _badge_text_color(r_color)
+        rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
+        return (
+            f'<span class="rating-tip">'
+            f'<div class="rating-box" style="background:{r_color};color:{r_txt}">'
+            f"{html.escape(rating_txt)}</div>"
+            f'<span class="rating-tipbox">{rank_txt}</span>'
+            f"</span>"
+        )
+    return f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
+
+
+def render_player_card(player: dict) -> None:
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    rating_html = _rating_header_html(player, metric_ranks)
+
+    main_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
+        ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
+        ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
+        ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
+    ]
+    style_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        ("Construção", "construction", CONSTRUCTION_METRIC_KEYS, True),
+        ("Agressão", "aggression", AGGRESSION_METRIC_KEYS, True),
+    ]
+
+    card_main = (
         '<div class="player-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
         f"{rating_html}"
-        + "".join(metrics_html)
+        + _build_sections_html(player, metric_ranks, main_sections)
         + "</div>"
     )
-    st.markdown(card, unsafe_allow_html=True)
+    card_style = (
+        '<div class="player-card">'
+        + _build_sections_html(player, metric_ranks, style_sections)
+        + "</div>"
+    )
+    st.markdown(card_main + card_style, unsafe_allow_html=True)
 
 
 def render_map_section(
@@ -454,7 +479,7 @@ def render_map_section(
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
     st.subheader("Rating por posição")
     st.caption(
-        "Rating = média das métricas, mapeado por posição (1º = 10,0 · último = 4,0 · média = 7,0). "
+        "Rating = média das notas por métrica na posição (1º = 10,0 · mediano = 7,0 · último = 4,0). "
         "Elegível: >30% dos jogos do time. Clique na linha para ver o mapa; passe o mouse nos quadradinhos e ratings do card para ver o ranking."
     )
     for group in POSITION_GROUPS_ORDER:
