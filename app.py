@@ -88,18 +88,13 @@ st.markdown(
     .metric-line span:last-child { white-space: nowrap; }
     .val-wrap { display: inline-flex; align-items: center; gap: 0.5rem; }
     .rank-badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 50px;
-        height: 28px;
-        padding: 0 7px;
-        border-radius: 6px;
-        font-size: 0.76rem;
-        font-weight: 700;
-        letter-spacing: -0.02em;
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        min-width: 12px;
+        border-radius: 3px;
         flex-shrink: 0;
-        border: 1px solid rgba(255,255,255,0.22);
+        border: 1px solid rgba(255,255,255,0.2);
     }
     .stat-section-row {
         display: flex;
@@ -155,16 +150,15 @@ def _norm(s: str) -> str:
 
 
 def rank_color(rank: int, total: int) -> str:
+    """Pastel gradient: dark green (best) → strong red (worst)."""
     if total <= 1:
-        return "#c5d0de"
-    if rank <= 5:
-        return "#b8d4f5"
-    if rank == total:
-        return "#f5c4c4"
+        return "#8fbf9f"
     t = (rank - 1) / (total - 1)
-    t = t ** 1.35
-    hue = (1.0 - t) * (132.0 / 360.0)
-    red, green, blue = colorsys.hls_to_rgb(hue, 0.74, 0.52)
+    t = min(1.0, max(0.0, t)) ** 1.15
+    hue = (1.0 - t) * (145.0 / 360.0)
+    lightness = 0.40 + t * 0.12
+    saturation = 0.48 + t * 0.22
+    red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
     return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
@@ -309,11 +303,7 @@ def _metric_line_html(
             rank = int(info["rank"])
             total = int(info["total"])
             color = rank_color(rank, total)
-            txt = _badge_text_color(color)
-            badge = (
-                f'<span class="rank-badge" style="background:{color};color:{txt}">'
-                f"{rank}/{total}</span>"
-            )
+            badge = f'<span class="rank-badge" style="background:{color}" title="{rank}/{total}"></span>'
     value_html = (
         f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
         if badge
@@ -459,7 +449,7 @@ def render_map_section(
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
     st.subheader("Rating por posição")
     st.caption(
-        "Rating = média dos scores por métrica (1º = 1,0 · último = 0,5). "
+        "Rating = média dos scores por métrica (1º = 10,0 · último = 4,0). "
         "Elegível: >30% dos jogos do time. Clique na linha para ver o mapa; passe o mouse no rating para rankings."
     )
     for group in POSITION_GROUPS_ORDER:

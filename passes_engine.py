@@ -26,14 +26,14 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 14
+DATA_CACHE_VERSION = 15
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
 RANKING_TOP_N = 20
 RATING_TOP_N = 20
 RATING_SCORE_BEST = 1.0
-RATING_SCORE_WORST = 0.5
+RATING_SCORE_WORST = 0.4
 
 # ── Pitch & zones ───────────────────────────────────────────────────────────
 FIELD_X, FIELD_Y = 120.0, 80.0
