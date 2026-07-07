@@ -4,28 +4,41 @@ from __future__ import annotations
 
 import colorsys
 import html
+import sys
 import unicodedata
+from pathlib import Path
+
+_APP_ROOT = Path(__file__).resolve().parent
+for _path in (_APP_ROOT, _APP_ROOT / "scripts"):
+    _entry = str(_path)
+    if _entry not in sys.path:
+        sys.path.insert(0, _entry)
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-from passes_engine import (
-    DATA_CACHE_VERSION,
-    LONG_BALL_STAT_KEYS,
-    POSITION_GROUPS_ORDER,
-    RATING_METRIC_KEYS,
-    RATING_TOP_N,
-    TOOLTIP_EXTRA_KEYS,
-    TOOLTIP_LABELS,
-    build_analytics,
-    compute_pass_ratings,
-    fmt_pct,
-    fmt_rating_score,
-    fmt_stat_value,
-    load_passes_grouped,
-    metric_label,
-)
+import passes_engine as pe
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
+
+DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
+LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
+POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
+RATING_METRIC_KEYS = pe.RATING_METRIC_KEYS
+RATING_TOP_N = pe.RATING_TOP_N
+TOOLTIP_EXTRA_KEYS = pe.TOOLTIP_EXTRA_KEYS
+TOOLTIP_LABELS = pe.TOOLTIP_LABELS
+build_analytics = pe.build_analytics
+compute_pass_ratings = pe.compute_pass_ratings
+fmt_pct = pe.fmt_pct
+fmt_stat_value = pe.fmt_stat_value
+load_passes_grouped = pe.load_passes_grouped
+metric_label = pe.metric_label
+
+
+def fmt_rating_score(pass_rating) -> str:
+    if pass_rating is None:
+        return "—"
+    return f"{float(pass_rating) * 10.0:.2f}"
 
 st.set_page_config(page_title="Passes xTh", layout="wide")
 

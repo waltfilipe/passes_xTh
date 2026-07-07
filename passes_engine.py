@@ -14,8 +14,14 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from external_models import load_markov_model
-from heuristic_scoring import GROUP_COLORS, POSITION_GROUPS_ORDER, is_outfield_position, position_group
-from sofascore_positions import normalize_sofascore_position
+from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
+
+try:
+    from sofascore_positions import normalize_sofascore_position
+except ImportError:
+    def normalize_sofascore_position(raw, *, default: str = "CM") -> str:
+        text = str(raw).strip().upper() if raw is not None else ""
+        return text or default
 
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
