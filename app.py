@@ -54,9 +54,12 @@ def rank_color(rank: int, total: int) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+TOOLTIP_KEYS = (*TOOLTIP_EXTRA_KEYS, *RATING_METRIC_KEYS)
+
+
 def _tooltip_rows(metric_ranks: dict) -> str:
     rows = []
-    for key in TOOLTIP_EXTRA_KEYS + list(RATING_METRIC_KEYS):
+    for key in TOOLTIP_KEYS:
         info = metric_ranks.get(key)
         if not info:
             continue
@@ -96,7 +99,7 @@ def render_rating_table(df: pd.DataFrame) -> None:
     body = []
     for _, row in df.iterrows():
         rating = float(row["Rating"])
-        tip = _tooltip_rows(row.get("metric_ranks") or {})
+        tip = _tooltip_rows(row["metric_ranks"] if isinstance(row.get("metric_ranks"), dict) else {})
         body.append(
             "<tr>"
             f"<td>{html.escape(str(row['Jogador']))}</td>"
