@@ -27,10 +27,11 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 18
+DATA_CACHE_VERSION = 19
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
+RATING_MIN_PASSES_PCT = 0.30
 RANKING_TOP_N = 20
 RATING_TOP_N = 20
 RATING_SCORE_BEST = 0.9
@@ -774,49 +775,149 @@ def _section_rating_ranks_for_pool(section_scores: dict[str, dict[str, float]], 
     return ranks
 
 
-def compute_pass_ratings(players: list[dict]) -> list[dict]:
-    by_position: dict[str, list[dict]] = {}
+def _position_pass_thresholds(players: list[dict]) -> dict[str, dict[str, float | int]]:
+    by_pos: dict[str, list[int]] = {}
     for player in players:
+        pos = str(player.get("position") or "—")
+        passes = int(player.get("passes_completed") or 0)
+        by_pos.setdefault(pos, []).append(passes)
+    out: dict[str, dict[str, float | int]] = {}
+    for pos, values in by_pos.items():
+        max_passes = max(values) if values else 0
+        out[pos] = {
+            "max_passes": max_passes,
+            "min_passes": max_passes * RATING_MIN_PASSES_PCT if max_passes > 0 else 0.0,
+        }
+    return out
+
+
+def enrich_player_eligibility(players: list[dict]) -> list[dict]:
+    thresholds = _position_pass_thresholds(players)
+    enriched: list[dict] = []
+    for player in players:
+        pos = str(player.get("position") or "—")
+        th = thresholds.get(pos, {"max_passes": 0, "min_passes": 0.0})
+        passes = int(player.get("passes_completed") or 0)
+        max_passes = int(th["max_passes"])
+        min_passes = float(th["min_passes"])
+        minutes_pct = player.get("minutes_pct")
+        minutes_ok = minutes_pct is not None and minutes_pct > RATING_MIN_MINUTES_PCT
+        passes_pct = (passes / max_passes) if max_passes > 0 else None
+        passes_ok = max_passes > 0 and passes >= min_passes
+        enriched.append({
+            **player,
+            "position_max_passes": max_passes,
+            "position_min_passes": round(min_passes, 1),
+            "passes_pct_of_position": round(passes_pct, 4) if passes_pct is not None else None,
+            "eligible_minutes": minutes_ok,
+            "eligible_passes": passes_ok,
+            "eligible_for_rating": minutes_ok and passes_ok,
+        })
+    return enriched
+
+
+def _rate_single_player(player: dict) -> dict[str, object]:
+    """Solo-pool rating when the player is outside the position ranking pool."""
+    metric_ranks: dict[str, dict] = {}
+    for key in RANK_DISPLAY_KEYS:
+        metric_ranks[key] = {
+            "rank": 1,
+            "total": 1,
+            "value": player.get(key),
+        }
+    metric_scores = [_rank_to_rating_score(1, 1) for _ in RATING_METRIC_KEYS]
+    pass_rating = round(sum(metric_scores) / len(metric_scores), 4) if metric_scores else RATING_SCORE_MID
+    section_ratings: dict[str, float] = {}
+    section_rating_ranks: dict[str, dict] = {}
+    for section_key, keys in SECTION_RATING_GROUPS.items():
+        section_scores = [_rank_to_rating_score(1, 1) for _ in keys]
+        section_value = round(sum(section_scores) / len(section_scores), 4) if section_scores else RATING_SCORE_MID
+        section_ratings[section_key] = section_value
+        section_rating_ranks[section_key] = {
+            "rank": 1,
+            "total": 1,
+            "value": section_value,
+        }
+    metric_ranks["pass_rating"] = {
+        "rank": 1,
+        "total": 1,
+        "value": pass_rating,
+    }
+    return {
+        "pass_rating": pass_rating,
+        "rating_is_solo": True,
+        "metric_ranks": metric_ranks,
+        "section_ratings": section_ratings,
+        "section_rating_ranks": section_rating_ranks,
+    }
+
+
+def _rate_position_pool(pos_players: list[dict]) -> list[dict]:
+    pool_size = len(pos_players)
+    if pool_size == 0:
+        return []
+    metric_ranks = _metric_ranks_for_pool(pos_players)
+    section_scores = _section_ratings_for_pool(pos_players, pool_size)
+    section_rating_ranks = _section_rating_ranks_for_pool(section_scores, pool_size)
+    scores: dict[str, list[float]] = {p["player_id"]: [] for p in pos_players}
+    for key in RATING_METRIC_KEYS:
+        ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
+        for rank, player in enumerate(ordered, start=1):
+            scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
+    pool_entries: list[dict] = []
+    for player in pos_players:
+        vals = scores[player["player_id"]]
+        pass_rating = round(sum(vals) / len(vals), 4) if vals else 0.0
+        pool_entries.append({
+            **player,
+            "pass_rating": pass_rating,
+            "rating_is_solo": False,
+            "metric_ranks": dict(metric_ranks.get(player["player_id"], {})),
+            "section_ratings": {
+                sk: section_scores[sk].get(player["player_id"], 0.0)
+                for sk in SECTION_RATING_GROUPS
+            },
+            "section_rating_ranks": {
+                sk: section_rating_ranks[sk].get(player["player_id"], {})
+                for sk in SECTION_RATING_GROUPS
+            },
+        })
+    pool_entries.sort(key=lambda p: p.get("pass_rating", 0), reverse=True)
+    for rank, player in enumerate(pool_entries, start=1):
+        player["metric_ranks"]["pass_rating"] = {
+            "rank": rank,
+            "total": pool_size,
+            "value": player["pass_rating"],
+        }
+    return pool_entries
+
+
+def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+    """Return ranking-pool players and all players indexed with pool or solo ratings."""
+    enriched = enrich_player_eligibility(players)
+    pool_players = [p for p in enriched if p.get("eligible_for_rating")]
+
+    by_position: dict[str, list[dict]] = {}
+    for player in pool_players:
         by_position.setdefault(str(player.get("position") or "—"), []).append(player)
-    rated: list[dict] = []
-    for pos, pos_players in by_position.items():
-        pool_size = len(pos_players)
-        if pool_size == 0:
-            continue
-        metric_ranks = _metric_ranks_for_pool(pos_players)
-        section_scores = _section_ratings_for_pool(pos_players, pool_size)
-        section_rating_ranks = _section_rating_ranks_for_pool(section_scores, pool_size)
-        scores: dict[str, list[float]] = {p["player_id"]: [] for p in pos_players}
-        for key in RATING_METRIC_KEYS:
-            ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
-            for rank, player in enumerate(ordered, start=1):
-                scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
-        pool_entries: list[dict] = []
-        for player in pos_players:
-            vals = scores[player["player_id"]]
-            pass_rating = round(sum(vals) / len(vals), 4) if vals else 0.0
-            pool_entries.append({
-                **player,
-                "pass_rating": pass_rating,
-                "metric_ranks": dict(metric_ranks.get(player["player_id"], {})),
-                "section_ratings": {
-                    sk: section_scores[sk].get(player["player_id"], 0.0)
-                    for sk in SECTION_RATING_GROUPS
-                },
-                "section_rating_ranks": {
-                    sk: section_rating_ranks[sk].get(player["player_id"], {})
-                    for sk in SECTION_RATING_GROUPS
-                },
-            })
-        pool_entries.sort(key=lambda p: p.get("pass_rating", 0), reverse=True)
-        for rank, player in enumerate(pool_entries, start=1):
-            player["metric_ranks"]["pass_rating"] = {
-                "rank": rank,
-                "total": pool_size,
-                "value": player["pass_rating"],
-            }
-        rated.extend(pool_entries)
-    return rated
+
+    rated_pool: list[dict] = []
+    for pos_players in by_position.values():
+        rated_pool.extend(_rate_position_pool(pos_players))
+
+    players_by_id: dict[str, dict] = {}
+    for player in enriched:
+        entry = dict(player)
+        players_by_id[player["player_id"]] = entry
+
+    for player in rated_pool:
+        players_by_id[player["player_id"]] = player
+
+    for player in enriched:
+        if not player.get("eligible_for_rating"):
+            players_by_id[player["player_id"]].update(_rate_single_player(player))
+
+    return rated_pool, players_by_id
 
 
 @functools.lru_cache(maxsize=1)
@@ -853,7 +954,6 @@ def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict]
         grp = passes[passes["player_id"] == pid]
         if grp.empty:
             continue
-        eligible = pct is not None and pct > RATING_MIN_MINUTES_PCT
         metrics = compute_player_metrics(grp, mins)
         players.append({
             "player_id": pid,
@@ -863,7 +963,6 @@ def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict]
             "team": mins.get("team", "—"),
             "minutes": mins.get("minutes"),
             "minutes_pct": pct,
-            "eligible_for_rating": eligible,
             **{k: round(v, 4) if isinstance(v, float) and abs(v) < 1000 else v for k, v in metrics.items()},
         })
     return registry, players

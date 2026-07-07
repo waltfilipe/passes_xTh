@@ -28,6 +28,7 @@ AGGRESSION_METRIC_KEYS = pe.AGGRESSION_METRIC_KEYS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
+RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 fmt_pct = pe.fmt_pct
@@ -80,6 +81,7 @@ st.markdown(
     .rating-row {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 0.55rem;
         margin-bottom: 0;
     }
@@ -307,11 +309,24 @@ function pickPlayer(pid) {{
     components.html(page, height=height, scrolling=False)
 
 
-def _is_rating_eligible(player: dict) -> bool:
-    if player.get("eligible_for_rating") is False:
-        return False
-    pct = player.get("minutes_pct")
-    return pct is not None and pct > RATING_MIN_MINUTES_PCT
+def _rating_warnings_html(player: dict) -> str:
+    warnings: list[str] = []
+    if not player.get("eligible_minutes", True):
+        warnings.append("Menos de 30% dos minutos")
+    if not player.get("eligible_passes", True):
+        min_passes = player.get("position_min_passes")
+        if min_passes is not None:
+            min_txt = fmt_stat_value("passes_completed", min_passes)
+            warnings.append(f"Menos de 30% dos passes da posição (mín. {min_txt})")
+        else:
+            warnings.append("Menos de 30% dos passes da posição")
+    return "".join(
+        '<span class="rating-warning-tip">'
+        '<span class="rating-warning">⚠</span>'
+        f'<span class="rating-tipbox">{html.escape(msg)}</span>'
+        "</span>"
+        for msg in warnings
+    )
 
 
 def _stat_display(player: dict, key: str) -> str:
@@ -419,20 +434,22 @@ def _build_sections_html(
 
 
 def _rating_header_html(player: dict, metric_ranks: dict) -> str:
-    eligible = _is_rating_eligible(player)
     rating_val = player.get("pass_rating")
-    rating_txt = fmt_rating_score(rating_val) if eligible and rating_val is not None else "—"
-    rating_info = metric_ranks.get("pass_rating") if eligible else None
+    rating_txt = fmt_rating_score(rating_val) if rating_val is not None else "—"
+    rating_info = metric_ranks.get("pass_rating")
+    is_solo = bool(player.get("rating_is_solo"))
 
-    if rating_info:
+    if rating_info and rating_val is not None:
         r_color = rating_value_color(rating_val)
         r_txt = _badge_text_color(r_color)
         rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
+        if is_solo:
+            rank_txt += " · individual"
         rating_box = (
             f'<span class="rating-tip">'
             f'<div class="rating-box" style="background:{r_color};color:{r_txt};margin-bottom:0">'
             f"{html.escape(rating_txt)}</div>"
-            f'<span class="rating-tipbox">{rank_txt}</span>'
+            f'<span class="rating-tipbox">{html.escape(rank_txt)}</span>'
             f"</span>"
         )
     else:
@@ -441,41 +458,8 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
             f"{html.escape(rating_txt)}</div>"
         )
 
-    warning = ""
-    if not eligible:
-        warning = (
-            '<span class="rating-warning-tip">'
-            '<span class="rating-warning">⚠</span>'
-            '<span class="rating-tipbox">Menos de 30% dos minutos</span>'
-            "</span>"
-        )
-
-    return f'<div class="rating-row">{rating_box}{warning}</div>'
-
-
-def _header_stat_html(label: str, value: str) -> str:
-    return (
-        '<div class="header-stat">'
-        f"{html.escape(label)}"
-        f"<strong>{html.escape(value)}</strong>"
-        "</div>"
-    )
-
-
-def _player_general_card_html(player: dict) -> str:
-    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
-    general_html = "".join(
-        _header_stat_html(metric_label(key), _stat_display(player, key))
-        for key in ("minutes", "passes_completed", "minutes_pct")
-    )
-    return (
-        '<div class="player-card player-info-card">'
-        f"<h3>{html.escape(player['player_name'])}</h3>"
-        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f"{_rating_header_html(player, metric_ranks)}"
-        f'<div class="player-header-stats">{general_html}</div>'
-        "</div>"
-    )
+    warnings = _rating_warnings_html(player)
+    return f'<div class="rating-row">{rating_box}{warnings}</div>'
 
 
 def _player_card_html(
@@ -492,7 +476,7 @@ def _player_card_html(
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_map1, col_map2, col_info = st.columns([1.35, 1.35, 0.7], gap="small")
+    col_map1, col_map2 = st.columns(2, gap="small")
 
     if passes is None or passes.empty:
         with col_map1:
@@ -505,9 +489,9 @@ def render_player_layout(player: dict, passes) -> None:
             fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
             st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
 
-    with col_info:
-        st.markdown(_player_general_card_html(player), unsafe_allow_html=True)
-
+    general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
+    ]
     abs_rel_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
         ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
@@ -520,7 +504,19 @@ def render_player_layout(player: dict, passes) -> None:
         ("Agressão", "aggression", AGGRESSION_METRIC_KEYS, True),
     ]
 
-    col_metrics, col_long, col_style = st.columns(3, gap="small")
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    general_card = (
+        '<div class="player-card player-info-card">'
+        f"<h3>{html.escape(player['player_name'])}</h3>"
+        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
+        f"{_rating_header_html(player, metric_ranks)}"
+        + _build_sections_html(player, metric_ranks, general_sections)
+        + "</div>"
+    )
+
+    col_general, col_metrics, col_long, col_style = st.columns(4, gap="small")
+    with col_general:
+        st.markdown(general_card, unsafe_allow_html=True)
     with col_metrics:
         st.markdown(_player_card_html(player, abs_rel_sections), unsafe_allow_html=True)
     with col_long:
@@ -577,7 +573,8 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
     st.subheader("Rating por posição")
     st.caption(
         "Rating = média das notas por métrica na posição (1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        "Elegível: >30% dos minutos. Clique na linha para ver o mapa; passe o mouse nos quadradinhos e ratings do card para ver o ranking."
+        f"Elegível: >{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% dos passes da posição. "
+        "Fora do pool: rating individual. Clique na linha para ver o mapa."
     )
     for group in POSITION_GROUPS_ORDER:
         subset = sorted(
@@ -609,16 +606,7 @@ def main() -> None:
         _, all_players = load_analytics()
         passes_by_player = load_passes()
 
-    eligible_players = [p for p in all_players if p.get("eligible_for_rating")]
-    rated = compute_pass_ratings(eligible_players)
-    players_by_id = {p["player_id"]: dict(p) for p in all_players}
-    for player in rated:
-        players_by_id[player["player_id"]].update({
-            "pass_rating": player.get("pass_rating"),
-            "metric_ranks": player.get("metric_ranks", {}),
-            "section_ratings": player.get("section_ratings", {}),
-            "section_rating_ranks": player.get("section_rating_ranks", {}),
-        })
+    rated, players_by_id = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
     render_map_section(all_players, players_by_id, passes_by_player)
