@@ -635,7 +635,9 @@ def render_comparison_section(
         "Terço final: passes completos com destino no terço final adversário."
     )
 
-    if not _comparison_metrics_available(all_players):
+    if not all_players or not all(
+        all_players[0].get(key) is not None for key in COMPARISON_PROGRESSION_KEYS
+    ):
         st.warning(
             "Passes progressivos e terço final não foram calculados — o servidor está com "
             "passes_engine.py desatualizado ou cache antigo. Reinicie o app no Streamlit Cloud "
