@@ -5,8 +5,8 @@ from __future__ import annotations
 import html
 import unicodedata
 
-import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from passes_engine import (
     POSITION_GROUPS_ORDER,
@@ -57,8 +57,8 @@ def rank_color(rank: int, total: int) -> str:
 TOOLTIP_KEYS = (*TOOLTIP_EXTRA_KEYS, *RATING_METRIC_KEYS)
 
 
-def _tooltip_rows(metric_ranks: dict) -> str:
-    rows = []
+def _tooltip_items(metric_ranks: dict) -> str:
+    items = []
     for key in TOOLTIP_KEYS:
         info = metric_ranks.get(key)
         if not info:
@@ -67,55 +67,60 @@ def _tooltip_rows(metric_ranks: dict) -> str:
         total = int(info["total"])
         label = TOOLTIP_LABELS.get(key, key)
         color = rank_color(rank, total)
-        rows.append(
-            f'<tr><td>{html.escape(label)}</td>'
-            f'<td style="color:{color};font-weight:600">{rank}/{total}</td></tr>'
+        items.append(
+            '<div class="tip-row">'
+            f'<span class="tip-label">{html.escape(label)}</span>'
+            f'<span class="tip-val" style="color:{color}">{rank}/{total}</span>'
+            "</div>"
         )
-    return "\n".join(rows)
+    return "".join(items)
 
 
-def render_rating_table(df: pd.DataFrame) -> None:
-    if df.empty:
+def render_rating_table(rows: list[dict]) -> None:
+    if not rows:
         st.info("Nenhum jogador elegível nesta posição.")
         return
 
-    css = """
-    <style>
-    .rx{width:100%;border-collapse:collapse;font-size:0.9rem}
-    .rx th,.rx td{padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:left}
-    .rx th{background:#f8fafc;font-weight:600}
-    .rx tr:hover td{background:#f8fafc}
-    .tip{position:relative;display:inline-block;cursor:help}
-    .tip>span{font-weight:700;color:#0f172a}
-    .tipbox{display:none;position:absolute;z-index:1000;right:0;top:calc(100% + 6px);
-      min-width:300px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;
-      padding:10px;box-shadow:0 8px 24px rgba(15,23,42,.15)}
-    .tip:hover .tipbox{display:block}
-    .tipbox table{width:100%;border-collapse:collapse;font-size:0.78rem}
-    .tipbox td{padding:3px 6px;border-bottom:1px solid #f1f5f9}
-    .tipbox td:last-child{text-align:right;white-space:nowrap}
-    </style>
-    """
     body = []
-    for _, row in df.iterrows():
+    for row in rows:
         rating = float(row["Rating"])
-        tip = _tooltip_rows(row["metric_ranks"] if isinstance(row.get("metric_ranks"), dict) else {})
+        ranks = row.get("metric_ranks") if isinstance(row.get("metric_ranks"), dict) else {}
+        tip = _tooltip_items(ranks)
         body.append(
             "<tr>"
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td>{html.escape(str(row['Time']))}</td>"
-            f'<td><div class="tip"><span>{rating:.3f}</span>'
-            f'<div class="tipbox"><table>{tip}</table></div></div></td>'
+            f'<td><div class="tip"><span class="rating">{rating:.3f}</span>'
+            f'<div class="tipbox">{tip}</div></div></td>'
             "</tr>"
         )
-    table = (
-        f"{css}<table class='rx'><thead><tr>"
-        + "".join(f"<th>{c}</th>" for c in RATING_COLUMNS)
-        + "</tr></thead><tbody>"
-        + "".join(body)
-        + "</tbody></table>"
-    )
-    st.markdown(table, unsafe_allow_html=True)
+
+    page = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#0f172a;background:#fff}}
+.rx{{width:100%;border-collapse:collapse;font-size:0.92rem}}
+.rx th,.rx td{{padding:9px 12px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}}
+.rx th{{background:#f8fafc;font-weight:600;color:#334155}}
+.rx tr:hover td{{background:#f8fafc}}
+.tip{{position:relative;display:inline-block}}
+.rating{{font-weight:700;cursor:help;border-bottom:1px dashed #94a3b8}}
+.tipbox{{display:none;position:absolute;z-index:9999;right:0;top:calc(100% + 8px);min-width:320px;
+  background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;
+  box-shadow:0 10px 28px rgba(15,23,42,.18)}}
+.tip:hover .tipbox{{display:block}}
+.tip-row{{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:0.8rem}}
+.tip-row:last-child{{border-bottom:none}}
+.tip-label{{color:#475569}}
+.tip-val{{font-weight:600;white-space:nowrap}}
+</style></head><body>
+<table class="rx"><thead><tr>
+{"".join(f"<th>{html.escape(c)}</th>" for c in RATING_COLUMNS)}
+</tr></thead><tbody>{"".join(body)}</tbody></table>
+</body></html>"""
+
+    height = min(44 * len(rows) + 52, 920)
+    components.html(page, height=height, scrolling=False)
 
 
 def render_rating_section(players: list[dict]) -> None:
@@ -143,7 +148,7 @@ def render_rating_section(players: list[dict]) -> None:
                 }
                 for p in subset
             ]
-            render_rating_table(pd.DataFrame(rows))
+            render_rating_table(rows)
 
 
 def render_impact_map(players: list[dict], passes_by_player: dict) -> None:
