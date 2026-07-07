@@ -816,6 +816,73 @@ def enrich_player_eligibility(players: list[dict]) -> list[dict]:
     return enriched
 
 
+def _score_for_rank_vs_pool(rank: int, pool_size: int) -> float:
+    if pool_size <= 0:
+        return RATING_SCORE_MID
+    if pool_size == 1:
+        return RATING_SCORE_BEST if rank == 1 else RATING_SCORE_WORST
+    effective_rank = min(max(rank, 1), pool_size)
+    return _rank_to_rating_score(effective_rank, pool_size)
+
+
+def rate_player_vs_eligible_pool(player: dict, eligible_pool: list[dict]) -> dict:
+    """Rank and rate a non-pool player against eligible peers in the same position."""
+    if not eligible_pool:
+        compared = _rate_single_player(player)
+        compared["rating_is_compared"] = False
+        return {**player, **compared}
+
+    pool_size = len(eligible_pool)
+
+    def rank_for_key(key: str) -> dict:
+        value = player.get(key)
+        rank = 1 + sum(1 for peer in eligible_pool if (peer.get(key) or 0) > (value or 0))
+        return {"rank": rank, "total": pool_size, "value": value}
+
+    metric_ranks = {key: rank_for_key(key) for key in RANK_DISPLAY_KEYS}
+    metric_scores = [
+        _score_for_rank_vs_pool(metric_ranks[key]["rank"], pool_size)
+        for key in RATING_METRIC_KEYS
+    ]
+    pass_rating = round(sum(metric_scores) / len(metric_scores), 4) if metric_scores else RATING_SCORE_MID
+
+    section_ratings: dict[str, float] = {}
+    section_rating_ranks: dict[str, dict] = {}
+    for section_key, keys in SECTION_RATING_GROUPS.items():
+        section_scores = [
+            _score_for_rank_vs_pool(metric_ranks[key]["rank"], pool_size)
+            for key in keys
+        ]
+        section_value = round(sum(section_scores) / len(section_scores), 4) if section_scores else RATING_SCORE_MID
+        section_ratings[section_key] = section_value
+        section_rank = 1 + sum(
+            1 for peer in eligible_pool
+            if (peer.get("section_ratings") or {}).get(section_key, 0) > section_value
+        )
+        section_rating_ranks[section_key] = {
+            "rank": section_rank,
+            "total": pool_size,
+            "value": section_value,
+        }
+
+    pass_rank = 1 + sum(1 for peer in eligible_pool if (peer.get("pass_rating") or 0) > pass_rating)
+    metric_ranks["pass_rating"] = {
+        "rank": pass_rank,
+        "total": pool_size,
+        "value": pass_rating,
+    }
+
+    return {
+        **player,
+        "pass_rating": pass_rating,
+        "rating_is_solo": False,
+        "rating_is_compared": True,
+        "metric_ranks": metric_ranks,
+        "section_ratings": section_ratings,
+        "section_rating_ranks": section_rating_ranks,
+    }
+
+
 def _rate_single_player(player: dict) -> dict[str, object]:
     """Solo-pool rating when the player is outside the position ranking pool."""
     metric_ranks: dict[str, dict] = {}
@@ -892,8 +959,8 @@ def _rate_position_pool(pos_players: list[dict]) -> list[dict]:
     return pool_entries
 
 
-def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dict]]:
-    """Return ranking-pool players and all players indexed with pool or solo ratings."""
+def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dict], dict[str, list[dict]]]:
+    """Return ranking pool, all players indexed, and eligible peers grouped by position."""
     enriched = enrich_player_eligibility(players)
     pool_players = [p for p in enriched if p.get("eligible_for_rating")]
 
@@ -902,22 +969,17 @@ def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dic
         by_position.setdefault(str(player.get("position") or "—"), []).append(player)
 
     rated_pool: list[dict] = []
-    for pos_players in by_position.values():
-        rated_pool.extend(_rate_position_pool(pos_players))
+    pool_by_position: dict[str, list[dict]] = {}
+    for pos, pos_players in by_position.items():
+        rated_pos = _rate_position_pool(pos_players)
+        rated_pool.extend(rated_pos)
+        pool_by_position[pos] = rated_pos
 
-    players_by_id: dict[str, dict] = {}
-    for player in enriched:
-        entry = dict(player)
-        players_by_id[player["player_id"]] = entry
-
+    players_by_id: dict[str, dict] = {player["player_id"]: dict(player) for player in enriched}
     for player in rated_pool:
         players_by_id[player["player_id"]] = player
 
-    for player in enriched:
-        if not player.get("eligible_for_rating"):
-            players_by_id[player["player_id"]].update(_rate_single_player(player))
-
-    return rated_pool, players_by_id
+    return rated_pool, players_by_id, pool_by_position
 
 
 @functools.lru_cache(maxsize=1)

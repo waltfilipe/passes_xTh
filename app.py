@@ -37,6 +37,7 @@ load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
 rank_to_display_score = pe.rank_to_display_score
 score_display_color = pe.score_display_color
+rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -203,6 +204,7 @@ st.markdown(
 st.title("Passes xTh — Série B")
 
 RATING_COLUMNS = ["Jogador", "Time", "Rating"]
+SELECTBOX_KEY = "map_player_select"
 
 
 @st.cache_data(show_spinner=False)
@@ -221,7 +223,10 @@ def _norm(s: str) -> str:
 
 def rank_color(rank: int, total: int) -> str:
     """Score-based gradient: 9 green → 6 yellow → 3 red."""
-    return score_display_color(rank_to_display_score(rank, total))
+    if total <= 0:
+        return score_display_color(6.0)
+    effective_rank = min(max(rank, 1), total)
+    return score_display_color(rank_to_display_score(effective_rank, total))
 
 
 def rating_value_color(pass_rating: float | None) -> str:
@@ -238,10 +243,14 @@ def _player_options(rated: list[dict]) -> list[tuple[str, str, str, str]]:
     return [(pid, name, team, f"{name} ({team})") for pid, name, team in rows]
 
 
-def _sync_selection_from_query(rated_by_id: dict[str, dict]) -> None:
+def _sync_player_selection(
+    players_by_id: dict[str, dict],
+    label_by_id: dict[str, str],
+) -> None:
     qp = st.query_params.get("player_id")
-    if qp and qp in rated_by_id:
+    if qp and qp in players_by_id:
         st.session_state["map_player_id"] = qp
+        st.session_state[SELECTBOX_KEY] = label_by_id[qp]
 
 
 def render_rating_table(
@@ -445,6 +454,8 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
         rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
         if is_solo:
             rank_txt += " · individual"
+        elif player.get("rating_is_compared"):
+            rank_txt += " · vs aptos"
         rating_box = (
             f'<span class="rating-tip">'
             f'<div class="rating-box" style="background:{r_color};color:{r_txt};margin-bottom:0">'
@@ -528,6 +539,7 @@ def render_player_layout(player: dict, passes) -> None:
 def render_map_section(
     all_players: list[dict],
     players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
     passes_by_player: dict,
 ) -> None:
     st.subheader("Mapa — passes de impacto")
@@ -542,28 +554,25 @@ def render_map_section(
     id_by_label = {o[3]: o[0] for o in options}
     label_by_id = {o[0]: o[3] for o in options}
 
-    _sync_selection_from_query(players_by_id)
-    map_player_id = st.session_state.get("map_player_id")
-    default_index = None
-    if map_player_id and map_player_id in label_by_id:
-        default_index = labels.index(label_by_id[map_player_id])
+    _sync_player_selection(players_by_id, label_by_id)
 
     selected_label = st.selectbox(
         "Jogador",
         options=labels,
-        index=default_index,
+        key=SELECTBOX_KEY,
         placeholder="Selecione um jogador",
     )
 
-    if selected_label:
-        st.session_state["map_player_id"] = id_by_label[selected_label]
-    else:
-        st.session_state.pop("map_player_id", None)
+    if not selected_label:
         st.info("Selecione um jogador na lista ou clique em uma linha da tabela de rating.")
         return
 
-    player_id = st.session_state["map_player_id"]
-    player = players_by_id[player_id]
+    player_id = id_by_label[selected_label]
+    st.session_state["map_player_id"] = player_id
+    player = dict(players_by_id[player_id])
+    if not player.get("eligible_for_rating"):
+        pos = str(player.get("position") or "—")
+        player = rate_player_vs_eligible_pool(player, pool_by_position.get(pos, []))
     passes = passes_by_player.get(player_id)
 
     render_player_layout(player, passes)
@@ -574,7 +583,7 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
     st.caption(
         "Rating = média das notas por métrica na posição (1º = 9,0 · mediano = 6,0 · último = 3,0). "
         f"Elegível: >{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% dos passes da posição. "
-        "Fora do pool: rating individual. Clique na linha para ver o mapa."
+        "Fora do pool: rating comparado aos aptos ao selecionar o jogador."
     )
     for group in POSITION_GROUPS_ORDER:
         subset = sorted(
@@ -606,10 +615,10 @@ def main() -> None:
         _, all_players = load_analytics()
         passes_by_player = load_passes()
 
-    rated, players_by_id = compute_pass_ratings(all_players)
+    rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    render_map_section(all_players, players_by_id, passes_by_player)
+    render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
     st.divider()
     render_rating_section(rated, selected_player_id=selected_player_id)
 
