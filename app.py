@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import html
 import unicodedata
 
@@ -9,6 +10,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from passes_engine import (
+    DATA_CACHE_VERSION,
     LONG_BALL_STAT_KEYS,
     POSITION_GROUPS_ORDER,
     RATING_METRIC_KEYS,
@@ -18,6 +20,7 @@ from passes_engine import (
     build_analytics,
     compute_pass_ratings,
     fmt_pct,
+    fmt_rating_score,
     fmt_stat_value,
     load_passes_grouped,
     metric_label,
@@ -39,12 +42,24 @@ st.markdown(
     }
     .player-card h3 { margin: 0 0 0.15rem 0; color: #f1f5f9; font-size: 1.15rem; }
     .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem; }
-    .player-card .rating {
-        display: inline-block;
-        font-size: 1.65rem;
+    .player-card .rating-box {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 76px;
+        height: 50px;
+        padding: 0 12px;
+        border-radius: 8px;
+        font-size: 1.55rem;
+        font-weight: 800;
+        margin-bottom: 0.85rem;
+        border: 1px solid rgba(255,255,255,0.16);
+        letter-spacing: 0.02em;
+    }
+    .metric-line .stat-val {
+        font-size: 0.95rem;
         font-weight: 700;
-        color: #7dd3fc;
-        margin-bottom: 0.75rem;
+        color: #f1f5f9;
     }
     .metric-line {
         display: flex;
@@ -55,7 +70,7 @@ st.markdown(
         font-size: 0.8rem;
         color: #cbd5e1;
     }
-    .metric-line span:last-child { color: #e2e8f0; font-weight: 600; white-space: nowrap; }
+    .metric-line span:last-child { white-space: nowrap; }
     .val-wrap { display: inline-flex; align-items: center; gap: 0.45rem; }
     .rank-badge {
         display: inline-flex;
@@ -92,13 +107,13 @@ TOOLTIP_KEYS = (*TOOLTIP_EXTRA_KEYS, *RATING_METRIC_KEYS)
 
 
 @st.cache_data(show_spinner=False)
-def load_analytics():
-    return build_analytics()
+def load_analytics(_cache_version: int = DATA_CACHE_VERSION):
+    return build_analytics(_cache_version)
 
 
 @st.cache_data(show_spinner=False)
-def load_passes():
-    return load_passes_grouped()
+def load_passes(_cache_version: int = DATA_CACHE_VERSION):
+    return load_passes_grouped(_cache_version)
 
 
 def _norm(s: str) -> str:
@@ -109,14 +124,14 @@ def rank_color(rank: int, total: int) -> str:
     if total <= 1:
         return "#94a3b8"
     if rank <= 5:
-        return "#60a5fa"
+        return "#3b82f6"
     if rank == total:
-        return "#f87171"
+        return "#dc2626"
     t = (rank - 1) / (total - 1)
-    r = int(52 + (248 - 52) * t)
-    g = int(211 + (113 - 211) * t)
-    b = int(153 + (113 - 153) * t)
-    return f"#{r:02x}{g:02x}{b:02x}"
+    t = t ** 1.35
+    hue = (1.0 - t) * (132.0 / 360.0)
+    red, green, blue = colorsys.hls_to_rgb(hue, 0.50, 0.80)
+    return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
 def _player_options(rated: list[dict]) -> list[tuple[str, str, str, str]]:
@@ -165,6 +180,7 @@ def render_rating_table(
     for row in rows:
         pid = html.escape(str(row["player_id"]))
         rating = float(row["Rating"])
+        rating_txt = fmt_rating_score(rating)
         ranks = row.get("metric_ranks") if isinstance(row.get("metric_ranks"), dict) else {}
         tip = _tooltip_items(ranks)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
@@ -173,7 +189,7 @@ def render_rating_table(
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
             f'<td><div class="tip" onclick="event.stopPropagation()">'
-            f'<span class="rating">{rating:.3f}</span>'
+            f'<span class="rating">{rating_txt}</span>'
             f'<div class="tipbox">{tip}</div></div></td>'
             "</tr>"
         )
@@ -259,13 +275,25 @@ def _metric_line_html(label: str, key: str, value: str, metric_ranks: dict) -> s
     return (
         '<div class="metric-line">'
         f"<span>{html.escape(label)}</span>"
-        f'<span class="val-wrap">{badge}{html.escape(value)}</span>'
+        f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
         "</div>"
     )
 
 
 def render_player_card(player: dict) -> None:
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    rating_txt = fmt_rating_score(player.get("pass_rating", 0))
+    rating_info = metric_ranks.get("pass_rating")
+    if rating_info:
+        r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
+        r_txt = _badge_text_color(r_color)
+        rating_html = (
+            f'<div class="rating-box" style="background:{r_color};color:{r_txt}">'
+            f"{html.escape(rating_txt)}</div>"
+        )
+    else:
+        rating_html = f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
+
     sections: list[tuple[str, tuple[str, ...]]] = [
         ("Geral", ("minutes", "passes_completed", "minutes_pct")),
         ("Long balls", LONG_BALL_STAT_KEYS),
@@ -283,7 +311,7 @@ def render_player_card(player: dict) -> None:
         '<div class="player-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f'<div class="rating">{fmt_stat_value("pass_rating", player.get("pass_rating", 0))}</div>'
+        f"{rating_html}"
         + "".join(metrics_html)
         + "</div>"
     )

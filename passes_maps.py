@@ -18,8 +18,8 @@ FIG_W_COMPACT, FIG_H_COMPACT = 4.5, 3.0
 FIG_DPI_COMPACT = 320
 MAP_REF_WIDTH = 7.2
 FIELD_X, FIELD_Y = 120.0, 80.0
-PASS_DEST_HEATMAP_COLS = 24
-PASS_DEST_HEATMAP_ROWS = 16
+PASS_DEST_HEATMAP_COLS = 12
+PASS_DEST_HEATMAP_ROWS = 8
 ARROW_WIDTH = 0.75
 ARROW_HEADWIDTH = 1.15
 ARROW_HEADLENGTH = 1.15
@@ -160,7 +160,7 @@ def draw_pass_destination_heatmap(
     *,
     compact: bool = True,
 ):
-    """24×16 heatmap of completed pass end locations."""
+    """12×8 heatmap of completed pass end locations."""
     if compact:
         figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
         dpi = FIG_DPI_COMPACT

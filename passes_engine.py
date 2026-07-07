@@ -20,7 +20,7 @@ from sofascore_positions import normalize_sofascore_position
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 12
+DATA_CACHE_VERSION = 13
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -617,26 +617,43 @@ def _derive_rates(stats: dict, minutes: float | None) -> dict:
     return out
 
 
-def _long_ball_mask(passes: pd.DataFrame) -> pd.Series:
-    return passes["is_long_ball"].fillna(False)
+def _long_pass_mask(passes: pd.DataFrame) -> pd.Series:
+    """Passes com destino e distância >= 30 m (StatsBomb, metros)."""
+    if passes.empty:
+        return pd.Series(dtype=bool)
+    has_end = passes["has_end"].fillna(False).astype(bool)
+    dist = np.sqrt(
+        (passes["x_end"].to_numpy(dtype=float) - passes["x_start"].to_numpy(dtype=float)) ** 2
+        + (passes["y_end"].to_numpy(dtype=float) - passes["y_start"].to_numpy(dtype=float)) ** 2
+    )
+    return has_end & (dist >= LONG_PASS_MIN_DISTANCE_M)
+
+
+def _long_ball_stats(passes: pd.DataFrame) -> dict:
+    mask = _long_pass_mask(passes)
+    long_passes = passes[mask]
+    n_long = int(mask.sum())
+    if n_long == 0:
+        return {
+            "long_balls": 0,
+            "long_balls_completed": 0,
+            "long_impact_passes": 0,
+            "long_impact_eff_pct": 0.0,
+            "long_impact_per_long_pass": 0.0,
+        }
+    layer = _pass_layer_metrics(long_passes)
+    n_impact = int(layer.get("impact_passes", 0))
+    return {
+        "long_balls": n_long,
+        "long_balls_completed": int(long_passes["is_success"].sum()),
+        "long_impact_passes": n_impact,
+        "long_impact_eff_pct": float(layer.get("impact_accuracy_pct", 0.0)),
+        "long_impact_per_long_pass": _safe_ratio(n_impact, n_long),
+    }
 
 
 def compute_player_metrics(passes: pd.DataFrame, minutes_info: dict) -> dict:
-    stats = _pass_layer_metrics(passes)
-    long_passes = passes[_long_ball_mask(passes)]
-    stats["long_balls"] = int(len(long_passes))
-    stats["long_balls_completed"] = int(long_passes["is_success"].sum()) if not long_passes.empty else 0
-    if long_passes.empty:
-        stats["long_impact_passes"] = 0
-        stats["long_impact_eff_pct"] = 0.0
-        stats["long_impact_per_long_pass"] = 0.0
-    else:
-        long_layer = _pass_layer_metrics(long_passes)
-        stats["long_impact_passes"] = int(long_layer.get("impact_passes", 0))
-        stats["long_impact_eff_pct"] = float(long_layer.get("impact_accuracy_pct", 0.0))
-        stats["long_impact_per_long_pass"] = _safe_ratio(
-            stats["long_impact_passes"], stats["long_balls"],
-        )
+    stats = {**_pass_layer_metrics(passes), **_long_ball_stats(passes)}
     minutes = minutes_info.get("minutes")
     return _derive_rates(stats, minutes)
 
@@ -681,13 +698,23 @@ def compute_pass_ratings(players: list[dict]) -> list[dict]:
             ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
             for rank, player in enumerate(ordered, start=1):
                 scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
+        pool_entries: list[dict] = []
         for player in pos_players:
             vals = scores[player["player_id"]]
-            rated.append({
+            pass_rating = round(sum(vals) / len(vals), 4) if vals else 0.0
+            pool_entries.append({
                 **player,
-                "pass_rating": round(sum(vals) / len(vals), 4) if vals else 0.0,
-                "metric_ranks": metric_ranks.get(player["player_id"], {}),
+                "pass_rating": pass_rating,
+                "metric_ranks": dict(metric_ranks.get(player["player_id"], {})),
             })
+        pool_entries.sort(key=lambda p: p.get("pass_rating", 0), reverse=True)
+        for rank, player in enumerate(pool_entries, start=1):
+            player["metric_ranks"]["pass_rating"] = {
+                "rank": rank,
+                "total": pool_size,
+                "value": player["pass_rating"],
+            }
+        rated.extend(pool_entries)
     return rated
 
 
@@ -789,6 +816,12 @@ def fmt_count(value) -> str:
 
 def fmt_pct(value: float) -> str:
     return f"{fmt_smart(value)}%"
+
+
+def fmt_rating_score(pass_rating) -> str:
+    if pass_rating is None:
+        return "—"
+    return f"{float(pass_rating) * 10.0:.2f}"
 
 
 def fmt_decimal(value, *, decimals: int = 3) -> str:
