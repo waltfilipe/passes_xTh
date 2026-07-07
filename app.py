@@ -48,7 +48,7 @@ st.set_page_config(page_title="Passes xTh", layout="wide")
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.25rem; max-width: 1400px; }
+    .block-container { padding-top: 1.25rem; max-width: 1600px; }
     .player-card {
         background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
         border: 1px solid #2a3550;
@@ -492,17 +492,17 @@ def _player_card_html(
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_map1, col_map2, col_info = st.columns(3, gap="small")
+    col_map1, col_map2, col_info = st.columns([1.35, 1.35, 0.7], gap="small")
 
     if passes is None or passes.empty:
         with col_map1:
             st.warning("Sem passes de impacto para este jogador.")
     else:
         with col_map1:
-            fig = draw_impact_pass_map(passes, player["player_name"], team_label)
+            fig = draw_impact_pass_map(passes, player["player_name"], team_label, compact=False)
             st.pyplot(fig, clear_figure=True, use_container_width=True)
         with col_map2:
-            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label)
+            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
             st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
 
     with col_info:
