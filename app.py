@@ -1,207 +1,183 @@
-"""Série B — Passes xT: Rating e Ranking."""
+"""Passes xTh — Série B: rating por posição e mapa de passes de impacto."""
+
+from __future__ import annotations
+
+import html
+import unicodedata
 
 import pandas as pd
 import streamlit as st
 
 from passes_engine import (
-    DATA_CACHE_VERSION,
-    GROUP_COLORS,
     POSITION_GROUPS_ORDER,
-    RANKING_METRIC_GROUPS,
-    RANKING_TOP_N,
     RATING_METRIC_KEYS,
-    RATING_MIN_MINUTES_PCT,
-    RATING_SCORE_BEST,
-    RATING_SCORE_WORST,
     RATING_TOP_N,
-    SEASON_ALL_CSV_PATH,
-    PLAYER_MATCH_STATS_PATH,
+    TOOLTIP_EXTRA_KEYS,
+    TOOLTIP_LABELS,
     build_analytics,
     compute_pass_ratings,
-    fmt_count,
-    fmt_decimal,
-    fmt_metric_value,
-    fmt_pct,
-    metric_label,
+    load_passes_grouped,
 )
+from passes_maps import draw_impact_pass_map
 
-st.set_page_config(layout="wide", page_title="Série B — Passes xT")
+st.set_page_config(page_title="Passes xTh", layout="wide")
+st.title("Passes xTh — Série B")
 
-st.markdown(
-    """
-    <style>
-    .block-container { padding-top: 1.5rem; }
-    .player-header {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #eef1f7;
-        margin-bottom: 0.5rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+RATING_COLUMNS = ["Jogador", "Time", "Rating"]
 
 
-@st.cache_data(show_spinner="Carregando season_all_serieb.csv…")
-def load_analytics(_cache_version: int = DATA_CACHE_VERSION):
-    return build_analytics(_cache_version)
+@st.cache_data(show_spinner=False)
+def load_analytics():
+    return build_analytics()
 
 
-def _ranking_table(players: list[dict], metric_key: str, metric_label_text: str) -> pd.DataFrame:
-    ranked = sorted(players, key=lambda p: p.get(metric_key, 0) or 0, reverse=True)[:RANKING_TOP_N]
+@st.cache_data(show_spinner=False)
+def load_passes():
+    return load_passes_grouped()
+
+
+def _norm(s: str) -> str:
+    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().lower()
+
+
+def rank_color(rank: int, total: int) -> str:
+    if total <= 1:
+        return "#94a3b8"
+    if rank <= 5:
+        return "#3b82f6"
+    if rank == total:
+        return "#ef4444"
+    t = (rank - 1) / (total - 1)
+    r = int(34 + (239 - 34) * t)
+    g = int(197 + (68 - 197) * t)
+    b = int(94 + (68 - 94) * t)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _tooltip_rows(metric_ranks: dict) -> str:
     rows = []
-    for idx, player in enumerate(ranked, start=1):
-        rows.append({
-            "#": idx,
-            "Jogador": player["player_name"],
-            "Pos.": player.get("position", "—"),
-            "Time": player.get("team", "—"),
-            metric_label_text: fmt_metric_value(metric_key, player.get(metric_key)),
-            "Min": fmt_count(player.get("minutes")),
-            "Passes": fmt_count(player.get("passes_completed")),
-        })
-    return pd.DataFrame(rows)
-
-
-def render_rating_tab(players: list[dict]) -> None:
-    st.markdown("### Rating · Passes")
-    st.caption(
-        f"Jogadores de linha com mais de **{int(RATING_MIN_MINUTES_PCT * 100)}%** dos minutos do time. "
-        f"Por métrica e posição: **1º = {RATING_SCORE_BEST:.1f}**, **último = {RATING_SCORE_WORST:.1f}**. "
-        f"Rating = média de **{len(RATING_METRIC_KEYS)}** scores."
-    )
-    if not players:
-        st.warning("Nenhum jogador elegível para o rating.")
-        return
-
-    rated = compute_pass_ratings(players)
-    st.caption(f"{len(rated)} elegíveis · top **{RATING_TOP_N}** por posição")
-
-    with st.expander("Métricas do rating", expanded=False):
-        for title, keys in RANKING_METRIC_GROUPS:
-            labels = ", ".join(metric_label(k) for k in keys)
-            st.markdown(f"**{title}** — {labels}")
-
-    by_position: dict[str, list[dict]] = {}
-    for player in rated:
-        by_position.setdefault(str(player.get("position") or "—"), []).append(player)
-
-    for position in sorted(by_position.keys()):
-        top = sorted(by_position[position], key=lambda p: p.get("pass_rating", 0), reverse=True)[:RATING_TOP_N]
-        st.markdown(
-            f'<div class="player-header" style="border-left:4px solid #5b9bd5;padding-left:0.5rem;">'
-            f"{position}</div>",
-            unsafe_allow_html=True,
-        )
-        rows = []
-        for idx, player in enumerate(top, start=1):
-            pct = player.get("minutes_pct")
-            rows.append({
-                "#": idx,
-                "Jogador": player["player_name"],
-                "Time": player.get("team", "—"),
-                "Rating": fmt_decimal(player.get("pass_rating")),
-                "Min": fmt_count(player.get("minutes")),
-                "Min %": fmt_pct(pct * 100.0) if pct is not None else "—",
-                "Passes": fmt_count(player.get("passes_completed")),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.markdown("---")
-
-
-def render_ranking_tab(players: list[dict]) -> None:
-    st.markdown("### Ranking · Passes")
-    st.caption(
-        f"Jogadores elegíveis (≥{int(RATING_MIN_MINUTES_PCT * 100)}% min) · "
-        f"top **{RANKING_TOP_N}** por métrica e grupo de posição."
-    )
-    if not players:
-        st.warning("Nenhum jogador elegível.")
-        return
-
-    by_group: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
-    for player in players:
-        group = player.get("position_group")
-        if group in by_group:
-            by_group[group].append(player)
-
-    ranking_metrics = [
-        (group_title, key, metric_label(key))
-        for group_title, keys in RANKING_METRIC_GROUPS
-        for key in keys
-    ]
-
-    for group in POSITION_GROUPS_ORDER:
-        group_players = by_group[group]
-        if not group_players:
+    for key in TOOLTIP_EXTRA_KEYS + list(RATING_METRIC_KEYS):
+        info = metric_ranks.get(key)
+        if not info:
             continue
-        color = GROUP_COLORS.get(group, "#94a3b8")
-        st.markdown(
-            f'<div class="player-header" style="border-left:4px solid {color};padding-left:0.5rem;">'
-            f"{group}</div>",
-            unsafe_allow_html=True,
+        rank = int(info["rank"])
+        total = int(info["total"])
+        label = TOOLTIP_LABELS.get(key, key)
+        color = rank_color(rank, total)
+        rows.append(
+            f'<tr><td>{html.escape(label)}</td>'
+            f'<td style="color:{color};font-weight:600">{rank}/{total}</td></tr>'
         )
-        current_group: str | None = None
-        cols = st.columns(3)
-        slot = 0
-        for group_title, metric_key, label in ranking_metrics:
-            if group_title != current_group:
-                current_group = group_title
-                st.markdown(f"**{group_title}**")
-                cols = st.columns(3)
-                slot = 0
-            with cols[slot % 3]:
-                st.markdown(f"**{label}**")
-                st.dataframe(
-                    _ranking_table(group_players, metric_key, label),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=420,
-                )
-            slot += 1
-            if slot % 3 == 0:
-                cols = st.columns(3)
-        st.markdown("---")
+    return "\n".join(rows)
 
 
-# ── MAIN ────────────────────────────────────────────────────────────────────
-st.markdown(
+def render_rating_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("Nenhum jogador elegível nesta posição.")
+        return
+
+    css = """
+    <style>
+    .rx{width:100%;border-collapse:collapse;font-size:0.9rem}
+    .rx th,.rx td{padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:left}
+    .rx th{background:#f8fafc;font-weight:600}
+    .rx tr:hover td{background:#f8fafc}
+    .tip{position:relative;display:inline-block;cursor:help}
+    .tip>span{font-weight:700;color:#0f172a}
+    .tipbox{display:none;position:absolute;z-index:1000;right:0;top:calc(100% + 6px);
+      min-width:300px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;
+      padding:10px;box-shadow:0 8px 24px rgba(15,23,42,.15)}
+    .tip:hover .tipbox{display:block}
+    .tipbox table{width:100%;border-collapse:collapse;font-size:0.78rem}
+    .tipbox td{padding:3px 6px;border-bottom:1px solid #f1f5f9}
+    .tipbox td:last-child{text-align:right;white-space:nowrap}
+    </style>
     """
-    <div style="text-align:center;margin-bottom:1rem;">
-      <h1 style="margin:0;color:#eef1f7;">Série B — Passes xT</h1>
-      <p style="color:#94a3b8;font-size:0.95rem;margin-top:0.35rem;">
-        Rating composto · Rankings por métrica · xT Heurístico v4
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-registry, players = load_analytics()
-if not registry or not players:
-    st.error(f"Dataset não encontrado ou sem jogadores elegíveis. Coloque `{SEASON_ALL_CSV_PATH.name}` na raiz.")
-    st.stop()
-
-with st.sidebar:
-    st.markdown(
-        """
-        <div style="text-align:center;">
-          <h3 style="margin:0;color:#eef1f7;">Passes xT</h3>
-          <p style="color:#94a3b8;font-size:0.85rem;">Série B</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    body = []
+    for _, row in df.iterrows():
+        rating = float(row["Rating"])
+        tip = _tooltip_rows(row.get("metric_ranks") or {})
+        body.append(
+            "<tr>"
+            f"<td>{html.escape(str(row['Jogador']))}</td>"
+            f"<td>{html.escape(str(row['Time']))}</td>"
+            f'<td><div class="tip"><span>{rating:.3f}</span>'
+            f'<div class="tipbox"><table>{tip}</table></div></div></td>'
+            "</tr>"
+        )
+    table = (
+        f"{css}<table class='rx'><thead><tr>"
+        + "".join(f"<th>{c}</th>" for c in RATING_COLUMNS)
+        + "</tr></thead><tbody>"
+        + "".join(body)
+        + "</tbody></table>"
     )
-    st.caption(f"{len(registry)} jogadores · {len(players)} elegíveis · xT v4")
-    with st.expander("Arquivos", expanded=False):
-        st.markdown(f"✓ `{SEASON_ALL_CSV_PATH.name}`")
-        st.markdown(f"{'✓' if PLAYER_MATCH_STATS_PATH.exists() else '✗'} `{PLAYER_MATCH_STATS_PATH.name}`")
+    st.markdown(table, unsafe_allow_html=True)
 
-tab_rating, tab_ranking = st.tabs(["Rating", "Ranking"])
 
-with tab_rating:
-    render_rating_tab(players)
+def render_rating_section(players: list[dict]) -> None:
+    st.subheader("Rating por posição")
+    st.caption(
+        "Rating = média dos scores por métrica (1º = 1,0 · último = 0,5). "
+        "Elegível: >30% dos jogos do time. Passe o mouse no rating para ver rankings."
+    )
+    rated = compute_pass_ratings(players)
+    for group in POSITION_GROUPS_ORDER:
+        subset = sorted(
+            [p for p in rated if p["position_group"] == group],
+            key=lambda p: p.get("pass_rating", 0),
+            reverse=True,
+        )[:RATING_TOP_N]
+        if not subset:
+            continue
+        with st.expander(f"{group} ({len(subset)})", expanded=group in {"Goleiro", "Zagueiro"}):
+            rows = [
+                {
+                    "Jogador": p["player_name"],
+                    "Time": p["team"],
+                    "Rating": p["pass_rating"],
+                    "metric_ranks": p.get("metric_ranks", {}),
+                }
+                for p in subset
+            ]
+            render_rating_table(pd.DataFrame(rows))
 
-with tab_ranking:
-    render_ranking_tab(players)
+
+def render_impact_map(players: list[dict], passes_by_player: dict) -> None:
+    st.subheader("Mapa — passes de impacto")
+    st.caption("Passes progressivos e de alto impacto concluídos (layout clássico).")
+
+    options = sorted(
+        {(p["player_id"], p["player_name"], p["team"]) for p in players},
+        key=lambda x: _norm(x[1]),
+    )
+    if not options:
+        st.info("Nenhum jogador elegível para o mapa.")
+        return
+
+    labels = [f"{name} ({team})" for _, name, team in options]
+    label = st.selectbox("Jogador", labels, key="impact_map_player")
+    idx = labels.index(label)
+    player_id, player_name, team = options[idx]
+
+    passes = passes_by_player.get(player_id)
+    if passes is None or passes.empty:
+        st.warning("Sem passes de impacto para este jogador.")
+        return
+
+    fig = draw_impact_pass_map(passes, player_name, team)
+    st.pyplot(fig, clear_figure=True)
+
+
+def main() -> None:
+    with st.spinner("Carregando dados…"):
+        players, _ = load_analytics()
+        passes_by_player = load_passes()
+
+    render_rating_section(players)
+    st.divider()
+    render_impact_map(players, passes_by_player)
+
+
+if __name__ == "__main__":
+    main()

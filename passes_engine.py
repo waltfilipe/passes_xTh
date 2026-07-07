@@ -21,7 +21,7 @@ from sofascore_positions import normalize_sofascore_position
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 9
+DATA_CACHE_VERSION = 10
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -107,6 +107,14 @@ METRIC_LABELS: dict[str, str] = {
     "construction_aip_per_pass": "Construction AIP / Construction Passes",
     "aggression_aip": "Aggression AIP",
     "aggression_aip_per_pass": "Aggression AIP / Aggression Passes",
+}
+
+TOOLTIP_EXTRA_KEYS: tuple[str, ...] = ("minutes", "passes_completed")
+
+TOOLTIP_LABELS: dict[str, str] = {
+    **METRIC_LABELS,
+    "minutes": "Minutos",
+    "passes_completed": "Passes",
 }
 
 
@@ -594,24 +602,59 @@ def _rank_to_rating_score(rank: int, pool_size: int) -> float:
     return RATING_SCORE_WORST + span * (pool_size - rank) / (pool_size - 1)
 
 
+def _metric_ranks_for_pool(pool: list[dict]) -> dict[str, dict[str, dict]]:
+    """player_id -> metric_key -> {rank, total, value}."""
+    n = len(pool)
+    if n == 0:
+        return {}
+    keys = list(RATING_METRIC_KEYS) + list(TOOLTIP_EXTRA_KEYS)
+    out: dict[str, dict[str, dict]] = {p["player_id"]: {} for p in pool}
+    for key in keys:
+        ordered = sorted(pool, key=lambda p: p.get(key, 0) or 0, reverse=True)
+        for rank, player in enumerate(ordered, start=1):
+            out[player["player_id"]][key] = {
+                "rank": rank,
+                "total": n,
+                "value": player.get(key),
+            }
+    return out
+
+
 def compute_pass_ratings(players: list[dict]) -> list[dict]:
     by_position: dict[str, list[dict]] = {}
     for player in players:
         by_position.setdefault(str(player.get("position") or "—"), []).append(player)
     rated: list[dict] = []
-    for pos_players in by_position.values():
-        n = len(pos_players)
-        if n == 0:
+    for pos, pos_players in by_position.items():
+        pool_size = len(pos_players)
+        if pool_size == 0:
             continue
+        metric_ranks = _metric_ranks_for_pool(pos_players)
         scores: dict[str, list[float]] = {p["player_id"]: [] for p in pos_players}
         for key in RATING_METRIC_KEYS:
             ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
             for rank, player in enumerate(ordered, start=1):
-                scores[player["player_id"]].append(_rank_to_rating_score(rank, n))
+                scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
         for player in pos_players:
             vals = scores[player["player_id"]]
-            rated.append({**player, "pass_rating": round(sum(vals) / len(vals), 4) if vals else 0.0})
+            rated.append({
+                **player,
+                "pass_rating": round(sum(vals) / len(vals), 4) if vals else 0.0,
+                "metric_ranks": metric_ranks.get(player["player_id"], {}),
+            })
     return rated
+
+
+@functools.lru_cache(maxsize=1)
+def load_passes_grouped(cache_version: int = DATA_CACHE_VERSION) -> dict[str, pd.DataFrame]:
+    """Enriched passes indexed by player_id (for impact maps)."""
+    _ = cache_version
+    if not SEASON_ALL_CSV_PATH.exists():
+        return {}
+    frame = pd.read_csv(SEASON_ALL_CSV_PATH, low_memory=False)
+    frame = frame[frame["category"].astype(str).str.lower() == "passes"]
+    passes = _enrich_passes(frame)
+    return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
 
 
 def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict], list[dict]]:
@@ -653,7 +696,7 @@ def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict]
 
 
 def metric_label(key: str) -> str:
-    return METRIC_LABELS.get(key, key.replace("_", " ").title())
+    return TOOLTIP_LABELS.get(key, key.replace("_", " ").title())
 
 
 def fmt_metric_value(key: str, value) -> str:
