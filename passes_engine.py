@@ -26,7 +26,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 15
+DATA_CACHE_VERSION = 16
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -137,8 +137,8 @@ RELATIVE_METRIC_KEYS: tuple[str, ...] = (
 )
 
 LONG_BALL_STAT_KEYS: tuple[str, ...] = (
-    "long_balls",
     "long_impact_passes",
+    "long_impact_per_long_pass",
 )
 
 SECTION_RATING_GROUPS: dict[str, tuple[str, ...]] = {
@@ -159,8 +159,8 @@ TOOLTIP_LABELS: dict[str, str] = {
     "minutes": "Minutos",
     "passes_completed": "Passes",
     "minutes_pct": "Min %",
-    "long_balls": "Long balls (>30 m)",
     "long_impact_passes": "Long balls impact",
+    "long_impact_per_long_pass": "Long impact / long ball",
 }
 
 
@@ -707,17 +707,24 @@ def _metric_ranks_for_pool(pool: list[dict]) -> dict[str, dict[str, dict]]:
 
 
 def _section_ratings_for_pool(pos_players: list[dict], pool_size: int) -> dict[str, dict[str, float]]:
-    out: dict[str, dict[str, float]] = {}
+    """Composite per section, then rank-mapped to 4.0–10.0 (mean 7.0 within pool)."""
+    raw: dict[str, dict[str, float]] = {}
     for section_key, keys in SECTION_RATING_GROUPS.items():
         scores: dict[str, list[float]] = {p["player_id"]: [] for p in pos_players}
         for key in keys:
             ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
             for rank, player in enumerate(ordered, start=1):
                 scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
-        out[section_key] = {
+        raw[section_key] = {
             pid: round(sum(vals) / len(vals), 4) if vals else 0.0
             for pid, vals in scores.items()
         }
+    out: dict[str, dict[str, float]] = {}
+    for section_key, by_player in raw.items():
+        ordered = sorted(by_player.items(), key=lambda item: item[1], reverse=True)
+        out[section_key] = {}
+        for rank, (pid, _) in enumerate(ordered, start=1):
+            out[section_key][pid] = round(_rank_to_rating_score(rank, pool_size), 4)
     return out
 
 
@@ -749,13 +756,25 @@ def compute_pass_ratings(players: list[dict]) -> list[dict]:
             ordered = sorted(pos_players, key=lambda p: p.get(key, 0) or 0, reverse=True)
             for rank, player in enumerate(ordered, start=1):
                 scores[player["player_id"]].append(_rank_to_rating_score(rank, pool_size))
-        pool_entries: list[dict] = []
+        raw_ratings: dict[str, float] = {}
         for player in pos_players:
             vals = scores[player["player_id"]]
-            pass_rating = round(sum(vals) / len(vals), 4) if vals else 0.0
+            raw_ratings[player["player_id"]] = round(sum(vals) / len(vals), 4) if vals else 0.0
+        ordered_by_raw = sorted(
+            pos_players,
+            key=lambda p: raw_ratings[p["player_id"]],
+            reverse=True,
+        )
+        pass_rating_by_id: dict[str, float] = {}
+        for rank, player in enumerate(ordered_by_raw, start=1):
+            pass_rating_by_id[player["player_id"]] = round(
+                _rank_to_rating_score(rank, pool_size), 4
+            )
+        pool_entries: list[dict] = []
+        for player in pos_players:
             pool_entries.append({
                 **player,
-                "pass_rating": pass_rating,
+                "pass_rating": pass_rating_by_id[player["player_id"]],
                 "metric_ranks": dict(metric_ranks.get(player["player_id"], {})),
                 "section_ratings": {
                     sk: section_scores[sk].get(player["player_id"], 0.0)

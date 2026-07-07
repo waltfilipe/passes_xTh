@@ -25,10 +25,7 @@ LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
 ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
 RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
-RATING_METRIC_KEYS = pe.RATING_METRIC_KEYS
 RATING_TOP_N = pe.RATING_TOP_N
-TOOLTIP_EXTRA_KEYS = pe.TOOLTIP_EXTRA_KEYS
-TOOLTIP_LABELS = pe.TOOLTIP_LABELS
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 fmt_pct = pe.fmt_pct
@@ -95,6 +92,34 @@ st.markdown(
         border-radius: 3px;
         flex-shrink: 0;
         border: 1px solid rgba(255,255,255,0.2);
+        cursor: help;
+    }
+    .rank-tip, .rating-tip, .section-rating-tip {
+        position: relative;
+        display: inline-flex;
+    }
+    .rank-tipbox, .rating-tipbox {
+        display: none;
+        position: absolute;
+        z-index: 100;
+        left: 50%;
+        bottom: calc(100% + 6px);
+        transform: translateX(-50%);
+        background: #111827;
+        border: 1px solid #3d4f6f;
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        white-space: nowrap;
+        box-shadow: 0 8px 20px rgba(0,0,0,.4);
+        pointer-events: none;
+    }
+    .rank-tip:hover .rank-tipbox,
+    .rating-tip:hover .rating-tipbox,
+    .section-rating-tip:hover .rating-tipbox {
+        display: block;
     }
     .stat-section-row {
         display: flex;
@@ -132,7 +157,6 @@ st.markdown(
 st.title("Passes xTh — Série B")
 
 RATING_COLUMNS = ["Jogador", "Time", "Rating"]
-TOOLTIP_KEYS = (*TOOLTIP_EXTRA_KEYS, *RATING_METRIC_KEYS)
 
 
 @st.cache_data(show_spinner=False)
@@ -176,25 +200,6 @@ def _sync_selection_from_query(rated_by_id: dict[str, dict]) -> None:
         st.session_state["map_player_id"] = qp
 
 
-def _tooltip_items(metric_ranks: dict) -> str:
-    items = []
-    for key in TOOLTIP_KEYS:
-        info = metric_ranks.get(key)
-        if not info:
-            continue
-        rank = int(info["rank"])
-        total = int(info["total"])
-        label = TOOLTIP_LABELS.get(key, key)
-        color = rank_color(rank, total)
-        items.append(
-            '<div class="tip-row">'
-            f'<span class="tip-label">{html.escape(label)}</span>'
-            f'<span class="tip-val" style="color:{color}">{rank}/{total}</span>'
-            "</div>"
-        )
-    return "".join(items)
-
-
 def render_rating_table(
     rows: list[dict],
     *,
@@ -209,16 +214,12 @@ def render_rating_table(
         pid = html.escape(str(row["player_id"]))
         rating = float(row["Rating"])
         rating_txt = fmt_rating_score(rating)
-        ranks = row.get("metric_ranks") if isinstance(row.get("metric_ranks"), dict) else {}
-        tip = _tooltip_items(ranks)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
         body.append(
             f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
-            f'<td><div class="tip" onclick="event.stopPropagation()">'
-            f'<span class="rating">{rating_txt}</span>'
-            f'<div class="tipbox">{tip}</div></div></td>'
+            f'<td class="rating">{rating_txt}</td>'
             "</tr>"
         )
 
@@ -239,16 +240,7 @@ body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI"
 .rx tr.row.sel td:first-child{{box-shadow:inset 3px 0 0 #60a5fa}}
 .rx tr:last-child td{{border-bottom:none}}
 .team{{color:#9fb0c7}}
-.tip{{position:relative;display:inline-block}}
-.rating{{font-weight:700;cursor:help;border-bottom:1px dashed #5b7aa5;color:#dbeafe}}
-.tipbox{{display:none;position:absolute;z-index:9999;right:0;top:calc(100% + 8px);min-width:300px;
-  background:#111827;border:1px solid #3d4f6f;border-radius:10px;padding:10px 12px;
-  box-shadow:0 12px 30px rgba(0,0,0,.45)}}
-.tip:hover .tipbox{{display:block}}
-.tip-row{{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid #1f2937;font-size:0.78rem}}
-.tip-row:last-child{{border-bottom:none}}
-.tip-label{{color:#94a3b8}}
-.tip-val{{font-weight:600;white-space:nowrap}}
+.rating{{font-weight:700;color:#dbeafe}}
 </style>
 <script>
 function pickPlayer(pid) {{
@@ -303,7 +295,12 @@ def _metric_line_html(
             rank = int(info["rank"])
             total = int(info["total"])
             color = rank_color(rank, total)
-            badge = f'<span class="rank-badge" style="background:{color}" title="{rank}/{total}"></span>'
+            badge = (
+                f'<span class="rank-tip">'
+                f'<span class="rank-badge" style="background:{color}"></span>'
+                f'<span class="rank-tipbox">{rank}/{total}</span>'
+                f"</span>"
+            )
     value_html = (
         f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
         if badge
@@ -328,9 +325,13 @@ def _section_header_html(title: str, section_key: str, player: dict) -> str:
         if rank_info:
             color = rank_color(int(rank_info["rank"]), int(rank_info["total"]))
             txt_color = _badge_text_color(color)
+            rank_txt = f'{int(rank_info["rank"])}/{int(rank_info["total"])}'
             pill = (
+                f'<span class="section-rating-tip">'
                 f'<span class="section-rating-pill" style="background:{color};color:{txt_color}">'
                 f"{html.escape(txt)}</span>"
+                f'<span class="rating-tipbox">{rank_txt}</span>'
+                f"</span>"
             )
         else:
             pill = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
@@ -349,9 +350,13 @@ def render_player_card(player: dict) -> None:
     if rating_info:
         r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
         r_txt = _badge_text_color(r_color)
+        rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
         rating_html = (
+            f'<span class="rating-tip">'
             f'<div class="rating-box" style="background:{r_color};color:{r_txt}">'
             f"{html.escape(rating_txt)}</div>"
+            f'<span class="rating-tipbox">{rank_txt}</span>'
+            f"</span>"
         )
     else:
         rating_html = f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
@@ -449,8 +454,8 @@ def render_map_section(
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
     st.subheader("Rating por posição")
     st.caption(
-        "Rating = média dos scores por métrica (1º = 10,0 · último = 4,0). "
-        "Elegível: >30% dos jogos do time. Clique na linha para ver o mapa; passe o mouse no rating para rankings."
+        "Rating = média das métricas, mapeado por posição (1º = 10,0 · último = 4,0 · média = 7,0). "
+        "Elegível: >30% dos jogos do time. Clique na linha para ver o mapa; passe o mouse nos quadradinhos e ratings do card para ver o ranking."
     )
     for group in POSITION_GROUPS_ORDER:
         subset = sorted(
