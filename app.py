@@ -631,8 +631,17 @@ def render_comparison_section(
     st.caption(
         "Rating por card = média das notas das métricas do card no grupo de posição "
         "(1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        "Passes progressivos seguem a regra Wyscout."
+        "Passes progressivos: regra Wyscout (completos, avançando em direção ao gol). "
+        "Terço final: passes completos com destino no terço final adversário."
     )
+
+    if not _comparison_metrics_available(all_players):
+        st.warning(
+            "Passes progressivos e terço final não foram calculados — o servidor está com "
+            "passes_engine.py desatualizado ou cache antigo. Reinicie o app no Streamlit Cloud "
+            "(Manage app → Reboot app) e confirme o deploy do commit mais recente."
+        )
+        return
 
     options = _player_options(all_players)
     if not options:
