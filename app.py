@@ -309,7 +309,6 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             render_rating_table(
                 rows,
                 selected_player_id=selected_player_id,
-                table_key=_norm(group),
             )
 
 
