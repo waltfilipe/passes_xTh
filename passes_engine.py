@@ -698,8 +698,6 @@ def rank_to_display_score(rank: int, pool_size: int) -> float:
 
 def score_display_color(display_score: float) -> str:
     """Green (9) → yellow (6) → red (3)."""
-    import colorsys
-
     score = max(3.0, min(9.0, float(display_score)))
     if score >= 6.0:
         t = (score - 6.0) / 3.0
@@ -899,6 +897,8 @@ def fmt_stat_value(key: str, value) -> str:
         "phi_per_pass": 3,
         "dxt_per_pass": 3,
         "long_impact_per_long_pass": 2,
+        "construction_aip_per_pass": 3,
+        "aggression_aip_per_pass": 3,
     }
     if key in fixed_decimals:
         return f"{float(value):.{fixed_decimals[key]}f}"

@@ -56,22 +56,15 @@ st.markdown(
         padding: 1rem 1.1rem;
         margin-bottom: 0.65rem;
     }
-    .player-header-card {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem 1.5rem;
+    .player-info-card .player-header-stats {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+        justify-content: stretch;
+        margin-top: 0.75rem;
     }
-    .player-header-main { flex: 1 1 220px; min-width: 0; }
-    .player-header-rating { flex: 0 0 auto; }
-    .player-header-stats {
-        flex: 1 1 280px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.65rem 1.25rem;
-        justify-content: flex-end;
-    }
+    .player-info-card .rating-row { margin-top: 0.75rem; }
+    .player-info-card .header-stat strong { font-size: 0.98rem; }
     .header-stat {
         font-size: 0.84rem;
         color: #94a3b8;
@@ -469,31 +462,57 @@ def _header_stat_html(label: str, value: str) -> str:
     )
 
 
-def render_player_header_card(player: dict) -> None:
+def _player_general_card_html(player: dict) -> str:
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
     general_html = "".join(
         _header_stat_html(metric_label(key), _stat_display(player, key))
         for key in ("minutes", "passes_completed", "minutes_pct")
     )
-    card = (
-        '<div class="player-card player-header-card">'
-        '<div class="player-header-main">'
+    return (
+        '<div class="player-card player-info-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        "</div>"
-        f'<div class="player-header-rating">{_rating_header_html(player, metric_ranks)}</div>'
+        f"{_rating_header_html(player, metric_ranks)}"
         f'<div class="player-header-stats">{general_html}</div>'
         "</div>"
     )
-    st.markdown(card, unsafe_allow_html=True)
 
 
-def render_player_metric_cards(player: dict) -> None:
+def _player_card_html(
+    player: dict,
+    sections: list[tuple[str, str | None, tuple[str, ...], bool]],
+) -> str:
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    return (
+        '<div class="player-card">'
+        + _build_sections_html(player, metric_ranks, sections)
+        + "</div>"
+    )
 
-    metrics_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+
+def render_player_layout(player: dict, passes) -> None:
+    team_label = player.get("team", "—")
+    col_map1, col_map2, col_info = st.columns(3, gap="small")
+
+    if passes is None or passes.empty:
+        with col_map1:
+            st.warning("Sem passes de impacto para este jogador.")
+    else:
+        with col_map1:
+            fig = draw_impact_pass_map(passes, player["player_name"], team_label)
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        with col_map2:
+            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label)
+            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+
+    with col_info:
+        st.markdown(_player_general_card_html(player), unsafe_allow_html=True)
+
+    abs_rel_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
         ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
+    ]
+    long_ball_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
     ]
     style_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
@@ -501,21 +520,13 @@ def render_player_metric_cards(player: dict) -> None:
         ("Agressão", "aggression", AGGRESSION_METRIC_KEYS, True),
     ]
 
-    card_metrics = (
-        '<div class="player-card">'
-        + _build_sections_html(player, metric_ranks, metrics_sections)
-        + "</div>"
-    )
-    card_style = (
-        '<div class="player-card">'
-        + _build_sections_html(player, metric_ranks, style_sections)
-        + "</div>"
-    )
-    col_metrics, col_style = st.columns(2, gap="small")
+    col_metrics, col_long, col_style = st.columns(3, gap="small")
     with col_metrics:
-        st.markdown(card_metrics, unsafe_allow_html=True)
+        st.markdown(_player_card_html(player, abs_rel_sections), unsafe_allow_html=True)
+    with col_long:
+        st.markdown(_player_card_html(player, long_ball_sections), unsafe_allow_html=True)
     with col_style:
-        st.markdown(card_style, unsafe_allow_html=True)
+        st.markdown(_player_card_html(player, style_sections), unsafe_allow_html=True)
 
 
 def render_map_section(
@@ -559,22 +570,7 @@ def render_map_section(
     player = players_by_id[player_id]
     passes = passes_by_player.get(player_id)
 
-    render_player_header_card(player)
-
-    col_impact, col_heat = st.columns(2, gap="small")
-    if passes is None or passes.empty:
-        with col_impact:
-            st.warning("Sem passes de impacto para este jogador.")
-    else:
-        team_label = player.get("team", "—")
-        with col_impact:
-            fig = draw_impact_pass_map(passes, player["player_name"], team_label)
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with col_heat:
-            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label)
-            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
-
-    render_player_metric_cards(player)
+    render_player_layout(player, passes)
 
 
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
