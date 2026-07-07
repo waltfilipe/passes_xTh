@@ -22,6 +22,8 @@ from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
+ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
+RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_METRIC_KEYS = pe.RATING_METRIC_KEYS
 RATING_TOP_N = pe.RATING_TOP_N
@@ -70,43 +72,62 @@ st.markdown(
         letter-spacing: 0.02em;
     }
     .metric-line .stat-val {
-        font-size: 0.95rem;
+        font-size: 1.05rem;
         font-weight: 700;
-        color: #f1f5f9;
+        color: #f8fafc;
     }
     .metric-line {
         display: flex;
         justify-content: space-between;
         gap: 0.75rem;
-        padding: 0.28rem 0;
+        padding: 0.32rem 0;
         border-bottom: 1px solid #1f293f;
-        font-size: 0.8rem;
+        font-size: 0.88rem;
         color: #cbd5e1;
     }
     .metric-line span:last-child { white-space: nowrap; }
-    .val-wrap { display: inline-flex; align-items: center; gap: 0.45rem; }
+    .val-wrap { display: inline-flex; align-items: center; gap: 0.5rem; }
     .rank-badge {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-width: 44px;
-        height: 24px;
-        padding: 0 6px;
-        border-radius: 5px;
-        font-size: 0.7rem;
+        min-width: 50px;
+        height: 28px;
+        padding: 0 7px;
+        border-radius: 6px;
+        font-size: 0.76rem;
         font-weight: 700;
         letter-spacing: -0.02em;
         flex-shrink: 0;
-        border: 1px solid rgba(255,255,255,0.14);
+        border: 1px solid rgba(255,255,255,0.22);
+    }
+    .stat-section-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.7rem;
+        margin-bottom: 0.25rem;
     }
     .stat-section {
-        margin-top: 0.65rem;
-        margin-bottom: 0.2rem;
-        color: #7dd3fc;
-        font-size: 0.72rem;
+        color: #93c5fd;
+        font-size: 0.74rem;
         font-weight: 700;
         letter-spacing: 0.06em;
         text-transform: uppercase;
+    }
+    .section-rating-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 52px;
+        padding: 4px 11px;
+        border-radius: 7px;
+        font-size: 0.82rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        border: 1px solid rgba(255,255,255,0.18);
+        white-space: nowrap;
     }
     </style>
     """,
@@ -135,15 +156,15 @@ def _norm(s: str) -> str:
 
 def rank_color(rank: int, total: int) -> str:
     if total <= 1:
-        return "#94a3b8"
+        return "#c5d0de"
     if rank <= 5:
-        return "#3b82f6"
+        return "#b8d4f5"
     if rank == total:
-        return "#dc2626"
+        return "#f5c4c4"
     t = (rank - 1) / (total - 1)
     t = t ** 1.35
     hue = (1.0 - t) * (132.0 / 360.0)
-    red, green, blue = colorsys.hls_to_rgb(hue, 0.50, 0.80)
+    red, green, blue = colorsys.hls_to_rgb(hue, 0.74, 0.52)
     return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
@@ -270,25 +291,63 @@ def _badge_text_color(hex_color: str) -> str:
     g = int(hex_color[3:5], 16)
     b = int(hex_color[5:7], 16)
     lum = 0.299 * r + 0.587 * g + 0.114 * b
-    return "#0f172a" if lum > 145 else "#f8fafc"
+    return "#1e293b" if lum > 168 else "#f8fafc"
 
 
-def _metric_line_html(label: str, key: str, value: str, metric_ranks: dict) -> str:
+def _metric_line_html(
+    label: str,
+    key: str,
+    value: str,
+    metric_ranks: dict,
+    *,
+    show_rank: bool = True,
+) -> str:
     badge = ""
-    info = metric_ranks.get(key)
-    if info:
-        rank = int(info["rank"])
-        total = int(info["total"])
-        color = rank_color(rank, total)
-        txt = _badge_text_color(color)
-        badge = (
-            f'<span class="rank-badge" style="background:{color};color:{txt}">'
-            f"{rank}/{total}</span>"
-        )
+    if show_rank:
+        info = metric_ranks.get(key)
+        if info:
+            rank = int(info["rank"])
+            total = int(info["total"])
+            color = rank_color(rank, total)
+            txt = _badge_text_color(color)
+            badge = (
+                f'<span class="rank-badge" style="background:{color};color:{txt}">'
+                f"{rank}/{total}</span>"
+            )
+    value_html = (
+        f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
+        if badge
+        else f'<span class="stat-val">{html.escape(value)}</span>'
+    )
     return (
         '<div class="metric-line">'
         f"<span>{html.escape(label)}</span>"
-        f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
+        f"{value_html}"
+        "</div>"
+    )
+
+
+def _section_header_html(title: str, section_key: str, player: dict) -> str:
+    section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
+    section_rank_info = player.get("section_rating_ranks") if isinstance(player.get("section_rating_ranks"), dict) else {}
+    score = section_ratings.get(section_key)
+    pill = ""
+    if score is not None:
+        txt = fmt_rating_score(score)
+        rank_info = section_rank_info.get(section_key)
+        if rank_info:
+            color = rank_color(int(rank_info["rank"]), int(rank_info["total"]))
+            txt_color = _badge_text_color(color)
+            pill = (
+                f'<span class="section-rating-pill" style="background:{color};color:{txt_color}">'
+                f"{html.escape(txt)}</span>"
+            )
+        else:
+            pill = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
+    return (
+        '<div class="stat-section-row">'
+        f'<span class="stat-section">{html.escape(title)}</span>'
+        f"{pill}"
         "</div>"
     )
 
@@ -307,17 +366,27 @@ def render_player_card(player: dict) -> None:
     else:
         rating_html = f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
 
-    sections: list[tuple[str, tuple[str, ...]]] = [
-        ("Geral", ("minutes", "passes_completed", "minutes_pct")),
-        ("Long balls", LONG_BALL_STAT_KEYS),
-        ("Métricas", RATING_METRIC_KEYS),
+    sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
+        ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
+        ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
+        ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
     ]
     metrics_html = []
-    for title, keys in sections:
-        metrics_html.append(f'<div class="stat-section">{html.escape(title)}</div>')
+    for title, section_key, keys, show_rank in sections:
+        if section_key:
+            metrics_html.append(_section_header_html(title, section_key, player))
+        else:
+            metrics_html.append(f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>')
         for key in keys:
             metrics_html.append(
-                _metric_line_html(metric_label(key), key, _stat_display(player, key), metric_ranks)
+                _metric_line_html(
+                    metric_label(key),
+                    key,
+                    _stat_display(player, key),
+                    metric_ranks,
+                    show_rank=show_rank,
+                )
             )
 
     card = (
