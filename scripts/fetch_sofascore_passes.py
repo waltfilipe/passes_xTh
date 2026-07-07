@@ -226,10 +226,31 @@ def fetch_match_passes(
         if ys:
             mean_y_by_player[pid] = _median(ys)
 
-    position_by_id = resolve_match_positions(
-        raw_by_player=raw_position_by_id,
-        mean_y_by_player=mean_y_by_player,
-    )
+    position_by_id: dict[int, str] = {}
+    for side in (lineups.home, lineups.away):
+        side_entries = [
+            entry
+            for entry in side.players
+            if entry.statistics.minutes_played >= min_minutes
+            and entry.player.id in player_passes
+        ]
+        if not side_entries:
+            continue
+        raw_side = {
+            entry.player.id: raw_position_by_id.get(entry.player.id, "")
+            for entry in side_entries
+        }
+        mean_y_side = {
+            entry.player.id: mean_y_by_player[entry.player.id]
+            for entry in side_entries
+            if entry.player.id in mean_y_by_player
+        }
+        position_by_id.update(
+            resolve_match_positions(
+                raw_by_player=raw_side,
+                mean_y_by_player=mean_y_side,
+            )
+        )
 
     rows: list[dict] = []
     players_with_passes = 0
@@ -273,6 +294,34 @@ def _append_rows_csv(path: Path, rows: list[dict], *, columns: list[str]) -> Non
         if write_header:
             writer.writeheader()
         writer.writerows(rows)
+
+
+def _read_csv_header(path: Path) -> list[str]:
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return next(csv.reader(handle), [])
+
+
+def _validate_season_csv_schema(path: Path) -> None:
+    """Reject legacy CSVs missing position_raw when resuming consolidated output."""
+    header = _read_csv_header(path)
+    if not header:
+        return
+    missing = [col for col in ACTION_COLUMNS if col not in header]
+    if "position_raw" in missing:
+        raise SystemExit(
+            f"\nERRO: {path} usa schema antigo (sem coluna position_raw).\n"
+            "O app precisa de posições detalhadas (LB, CAM, RW, …).\n\n"
+            "Opções:\n"
+            "  1. Remova ou renomeie o CSV e extraia de novo sem --resume\n"
+            "  2. Use outro --season-filename ou --output-dir\n"
+            f"\nColunas esperadas: {', '.join(ACTION_COLUMNS)}"
+        )
+    if missing:
+        raise SystemExit(
+            f"\nERRO: {path} está incompleto. Colunas ausentes: {', '.join(missing)}"
+        )
 
 
 def _consolidate_match_files(out_dir: Path, out_name: str = "season_all.csv") -> int:
@@ -414,6 +463,7 @@ def main() -> int:
         return 0
 
     if args.consolidated_only and args.resume and season_path.exists():
+        _validate_season_csv_schema(season_path)
         _log(f"Acrescentando em {season_path.name} existente …")
 
     done = load_done(done_path) if args.resume else set()

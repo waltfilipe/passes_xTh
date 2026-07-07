@@ -78,6 +78,68 @@ def is_coarse_position(raw: str | None) -> bool:
     return bool(raw) and str(raw).strip().upper() in COARSE_POSITIONS
 
 
+def _def_line_template(n: int) -> list[str]:
+    if n <= 0:
+        return []
+    if n <= 5:
+        return DEF_LINE_BY_COUNT[n]
+    positions = ["LB"]
+    inner = n - 2
+    if inner == 1:
+        positions.append("CB")
+    elif inner == 2:
+        positions.extend(["LCB", "RCB"])
+    else:
+        positions.append("LCB")
+        positions.extend(["CB"] * (inner - 2))
+        positions.append("RCB")
+    positions.append("RB")
+    return positions
+
+
+def _mid_line_template(n: int) -> list[str]:
+    if n <= 0:
+        return []
+    if n <= 5:
+        return MID_LINE_BY_COUNT[n]
+    positions = ["LM"]
+    inner = n - 2
+    if inner == 1:
+        positions.append("CM")
+    elif inner == 2:
+        positions.extend(["LCM", "RCM"])
+    else:
+        positions.append("LCM")
+        positions.extend(["CM"] * (inner - 2))
+        positions.append("RCM")
+    positions.append("RM")
+    return positions
+
+
+def _fwd_line_template(n: int) -> list[str]:
+    if n <= 0:
+        return []
+    if n <= 3:
+        return FWD_LINE_BY_COUNT[n]
+    if n == 4:
+        return ["LW", "ST", "ST", "RW"]
+    positions = ["LW"]
+    inner = n - 2
+    positions.extend(["ST"] * inner)
+    positions.append("RW")
+    return positions
+
+
+def _line_template_for_count(coarse_key: str, n: int) -> list[str] | None:
+    if coarse_key == "D":
+        return _def_line_template(n)
+    if coarse_key == "M":
+        return _mid_line_template(n)
+    if coarse_key == "F":
+        return _fwd_line_template(n)
+    return None
+
+
 def _assign_by_lateral_order(
     player_ids: list[int],
     mean_y: dict[int, float],
@@ -125,18 +187,14 @@ def infer_coarse_positions(
     for pid in by_coarse["G"]:
         resolved[pid] = "GK"
 
-    for coarse_key, positions in (
-        ("D", DEF_LINE_BY_COUNT),
-        ("M", MID_LINE_BY_COUNT),
-        ("F", FWD_LINE_BY_COUNT),
-    ):
+    for coarse_key in ("D", "M", "F"):
         ids = by_coarse[coarse_key]
         if not ids:
             continue
         if coarse_key == "F" and len(ids) == 2:
             resolved.update(_infer_two_forwards(ids, mean_y_by_player))
             continue
-        template = positions.get(len(ids))
+        template = _line_template_for_count(coarse_key, len(ids))
         if template:
             resolved.update(_assign_by_lateral_order(ids, mean_y_by_player, template))
         else:

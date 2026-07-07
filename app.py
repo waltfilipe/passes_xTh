@@ -571,18 +571,18 @@ def render_map_section(
     st.session_state["map_player_id"] = player_id
     player = dict(players_by_id[player_id])
     if not player.get("eligible_for_rating"):
-        pos = str(player.get("position") or "—")
-        player = rate_player_vs_eligible_pool(player, pool_by_position.get(pos, []))
+        group = str(player.get("position_group") or "—")
+        player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
     passes = passes_by_player.get(player_id)
 
     render_player_layout(player, passes)
 
 
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
-    st.subheader("Rating por posição")
+    st.subheader("Rating por grupo de posição")
     st.caption(
-        "Rating = média das notas por métrica na posição (1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        f"Elegível: >{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% dos passes da posição. "
+        "Rating = média das notas por métrica no grupo (1º = 9,0 · mediano = 6,0 · último = 3,0). "
+        f"Elegível: >{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% dos passes do grupo. "
         "Fora do pool: rating comparado aos aptos ao selecionar o jogador."
     )
     for group in POSITION_GROUPS_ORDER:
@@ -593,7 +593,7 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
         )[:RATING_TOP_N]
         if not subset:
             continue
-        with st.expander(f"{group} ({len(subset)})", expanded=group in {"Goleiro", "Zagueiro"}):
+        with st.expander(f"{group} ({len(subset)})", expanded=group == "Zagueiros"):
             rows = [
                 {
                     "player_id": p["player_id"],

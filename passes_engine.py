@@ -18,16 +18,22 @@ from external_models import load_markov_model
 from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
 
 try:
-    from sofascore_positions import normalize_sofascore_position
+    from sofascore_positions import normalize_sofascore_position, resolve_match_positions
 except ImportError:
     def normalize_sofascore_position(raw, *, default: str = "CM") -> str:
         text = str(raw).strip().upper() if raw is not None else ""
         return text or default
 
+    def resolve_match_positions(*, raw_by_player, mean_y_by_player=None):
+        return {
+            pid: normalize_sofascore_position(raw)
+            for pid, raw in raw_by_player.items()
+        }
+
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 19
+DATA_CACHE_VERSION = 20
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -413,6 +419,126 @@ def _normalize_position(raw: str | None) -> str:
     return normalize_sofascore_position(raw, default=DEFAULT_PLAYER_POSITION)
 
 
+_COARSE_FROM_APP: dict[str, str] = {
+    "GK": "G",
+    "CB": "D",
+    "LCB": "D",
+    "RCB": "D",
+    "LB": "D",
+    "RB": "D",
+    "LWB": "D",
+    "RWB": "D",
+    "CM": "M",
+    "CDM": "M",
+    "CAM": "M",
+    "LCM": "M",
+    "RCM": "M",
+    "LM": "M",
+    "RM": "M",
+    "LDM": "M",
+    "RDM": "M",
+    "ST": "F",
+    "CF": "F",
+    "SS": "F",
+    "LW": "F",
+    "RW": "F",
+    "RCF": "F",
+    "LCF": "F",
+}
+
+
+def _player_id_key(player_id) -> int | str:
+    text = str(player_id).strip()
+    return int(text) if text.isdigit() else text
+
+
+def _coarse_raw_for_inference(raw: str | None, app_position: str | None) -> str:
+    text = str(raw or "").strip().upper()
+    if text in {"G", "D", "M", "F"}:
+        return text
+    if text:
+        mapped = normalize_sofascore_position(text, default="")
+        if mapped:
+            return _COARSE_FROM_APP.get(mapped, text[:1])
+    app = str(app_position or "").strip().upper()
+    if app:
+        return _COARSE_FROM_APP.get(app, app[:1])
+    return "M"
+
+
+def resolve_positions_in_csv_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Resolve LB/CAM/RW… per match from position_raw + mean pass y (or coarse fallback)."""
+    if frame.empty or "event_id" not in frame.columns:
+        return frame
+
+    work = frame.copy()
+    work["player_id"] = work["player_id"].astype(str)
+    has_raw = "position_raw" in work.columns
+    has_position = "position" in work.columns
+    if not has_raw and not has_position:
+        return work
+
+    resolved_by_event_player: dict[tuple[str, str], str] = {}
+
+    group_keys = ["event_id"]
+    if "isHome" in work.columns:
+        group_keys.append("isHome")
+
+    for group_vals, grp in work.groupby(group_keys, sort=False):
+        if not isinstance(group_vals, tuple):
+            group_vals = (group_vals,)
+        event_id = group_vals[0]
+        raw_by_player: dict[int | str, str] = {}
+        mean_y_by_player: dict[int | str, float] = {}
+
+        for player_id, sub in grp.groupby("player_id", sort=False):
+            pid_key = _player_id_key(player_id)
+            if has_raw:
+                raw_series = sub["position_raw"].dropna().astype(str).str.strip()
+                raw_val = raw_series.iloc[0] if not raw_series.empty else ""
+            else:
+                raw_val = ""
+            app_pos = ""
+            if has_position:
+                pos_series = sub["position"].dropna().astype(str).str.strip()
+                if not pos_series.empty:
+                    app_pos = str(pos_series.mode().iloc[0])
+            coarse_raw = _coarse_raw_for_inference(raw_val, app_pos)
+            if coarse_raw:
+                raw_by_player[pid_key] = coarse_raw
+
+            ys = pd.to_numeric(sub["start_y"], errors="coerce").dropna()
+            if not ys.empty:
+                mean_y_by_player[pid_key] = float(ys.median())
+
+        position_by_id = resolve_match_positions(
+            raw_by_player=raw_by_player,
+            mean_y_by_player=mean_y_by_player,
+        )
+        event_key = str(event_id)
+        for pid_key, pos in position_by_id.items():
+            resolved_by_event_player[(event_key, str(pid_key))] = _normalize_position(pos)
+
+    def _lookup_position(row: pd.Series) -> str:
+        key = (str(row["event_id"]), str(row["player_id"]))
+        if key in resolved_by_event_player:
+            return resolved_by_event_player[key]
+        if has_position and pd.notna(row.get("position")):
+            return _normalize_position(row["position"])
+        return DEFAULT_PLAYER_POSITION
+
+    work["position"] = work.apply(_lookup_position, axis=1)
+    return work
+
+
+def _load_season_pass_frame() -> pd.DataFrame:
+    if not SEASON_ALL_CSV_PATH.exists():
+        return pd.DataFrame()
+    frame = pd.read_csv(SEASON_ALL_CSV_PATH, low_memory=False)
+    frame = frame[frame["category"].astype(str).str.lower() == "passes"]
+    return resolve_positions_in_csv_frame(frame)
+
+
 def build_player_registry(frame: pd.DataFrame) -> list[dict]:
     work = frame.copy()
     work["player_id"] = work["player_id"].astype(str)
@@ -776,15 +902,15 @@ def _section_rating_ranks_for_pool(section_scores: dict[str, dict[str, float]], 
 
 
 def _position_pass_thresholds(players: list[dict]) -> dict[str, dict[str, float | int]]:
-    by_pos: dict[str, list[int]] = {}
+    by_group: dict[str, list[int]] = {}
     for player in players:
-        pos = str(player.get("position") or "—")
+        group = str(player.get("position_group") or "—")
         passes = int(player.get("passes_completed") or 0)
-        by_pos.setdefault(pos, []).append(passes)
+        by_group.setdefault(group, []).append(passes)
     out: dict[str, dict[str, float | int]] = {}
-    for pos, values in by_pos.items():
+    for group, values in by_group.items():
         max_passes = max(values) if values else 0
-        out[pos] = {
+        out[group] = {
             "max_passes": max_passes,
             "min_passes": max_passes * RATING_MIN_PASSES_PCT if max_passes > 0 else 0.0,
         }
@@ -795,8 +921,8 @@ def enrich_player_eligibility(players: list[dict]) -> list[dict]:
     thresholds = _position_pass_thresholds(players)
     enriched: list[dict] = []
     for player in players:
-        pos = str(player.get("position") or "—")
-        th = thresholds.get(pos, {"max_passes": 0, "min_passes": 0.0})
+        group = str(player.get("position_group") or "—")
+        th = thresholds.get(group, {"max_passes": 0, "min_passes": 0.0})
         passes = int(player.get("passes_completed") or 0)
         max_passes = int(th["max_passes"])
         min_passes = float(th["min_passes"])
@@ -960,20 +1086,20 @@ def _rate_position_pool(pos_players: list[dict]) -> list[dict]:
 
 
 def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dict], dict[str, list[dict]]]:
-    """Return ranking pool, all players indexed, and eligible peers grouped by position."""
+    """Return ranking pool, all players indexed, and eligible peers grouped by position group."""
     enriched = enrich_player_eligibility(players)
     pool_players = [p for p in enriched if p.get("eligible_for_rating")]
 
-    by_position: dict[str, list[dict]] = {}
+    by_group: dict[str, list[dict]] = {}
     for player in pool_players:
-        by_position.setdefault(str(player.get("position") or "—"), []).append(player)
+        by_group.setdefault(str(player.get("position_group") or "—"), []).append(player)
 
     rated_pool: list[dict] = []
     pool_by_position: dict[str, list[dict]] = {}
-    for pos, pos_players in by_position.items():
-        rated_pos = _rate_position_pool(pos_players)
-        rated_pool.extend(rated_pos)
-        pool_by_position[pos] = rated_pos
+    for group, group_players in by_group.items():
+        rated_group = _rate_position_pool(group_players)
+        rated_pool.extend(rated_group)
+        pool_by_position[group] = rated_group
 
     players_by_id: dict[str, dict] = {player["player_id"]: dict(player) for player in enriched}
     for player in rated_pool:
@@ -986,10 +1112,9 @@ def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dic
 def load_passes_grouped(cache_version: int = DATA_CACHE_VERSION) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
     _ = cache_version
-    if not SEASON_ALL_CSV_PATH.exists():
+    frame = _load_season_pass_frame()
+    if frame.empty:
         return {}
-    frame = pd.read_csv(SEASON_ALL_CSV_PATH, low_memory=False)
-    frame = frame[frame["category"].astype(str).str.lower() == "passes"]
     passes = _enrich_passes(frame)
     return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
 
@@ -997,11 +1122,10 @@ def load_passes_grouped(cache_version: int = DATA_CACHE_VERSION) -> dict[str, pd
 def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict], list[dict]]:
     """Load CSV once, compute all player metrics. Returns (registry, eligible_players)."""
     _ = cache_version
-    if not SEASON_ALL_CSV_PATH.exists():
+    frame = _load_season_pass_frame()
+    if frame.empty:
         return [], []
 
-    frame = pd.read_csv(SEASON_ALL_CSV_PATH, low_memory=False)
-    frame = frame[frame["category"].astype(str).str.lower() == "passes"]
     registry = build_player_registry(frame)
     passes = _enrich_passes(frame)
     minutes_info = _load_minutes_info(frame)
