@@ -18,7 +18,6 @@ from passes_engine import (
     build_analytics,
     compute_pass_ratings,
     fmt_pct,
-    fmt_smart,
     fmt_stat_value,
     load_passes_grouped,
     metric_label,
@@ -284,7 +283,7 @@ def render_player_card(player: dict) -> None:
         '<div class="player-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f'<div class="rating">{fmt_smart(player.get("pass_rating", 0))}</div>'
+        f'<div class="rating">{fmt_stat_value("pass_rating", player.get("pass_rating", 0))}</div>'
         + "".join(metrics_html)
         + "</div>"
     )

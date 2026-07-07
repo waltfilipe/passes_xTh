@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.interpolate import RegularGridInterpolator
 
 _SCRIPTS = Path(__file__).resolve().parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -209,6 +208,8 @@ def _build_heuristic_v31_threat_surface(Xc: np.ndarray, Yc: np.ndarray) -> np.nd
 
 
 def _markov_quadrant_bonus_field(nx: int, ny: int) -> np.ndarray:
+    from scipy.interpolate import RegularGridInterpolator
+
     grid = load_markov_model("top5").xT
     peak = max(float(grid.max()), 1e-9)
     rel = (grid / peak) ** XT_V4_MARKOV_BONUS_POWER
@@ -242,7 +243,9 @@ def _build_heuristic_v4_fine_grid(nx: int = XT_V3_FINE_NX, ny: int = XT_V3_FINE_
 
 
 @functools.lru_cache(maxsize=1)
-def _v4_interpolator() -> RegularGridInterpolator:
+def _v4_interpolator():
+    from scipy.interpolate import RegularGridInterpolator
+
     fine = _build_heuristic_v4_fine_grid()
     nx, ny = fine.shape[1], fine.shape[0]
     x_coords = np.linspace(0.0, FIELD_X, nx)
@@ -786,3 +789,9 @@ def fmt_count(value) -> str:
 
 def fmt_pct(value: float) -> str:
     return f"{fmt_smart(value)}%"
+
+
+def fmt_decimal(value, *, decimals: int = 3) -> str:
+    if value is None:
+        return "—"
+    return fmt_smart(value, max_decimals=decimals)
