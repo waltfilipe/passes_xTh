@@ -26,15 +26,15 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 17
+DATA_CACHE_VERSION = 18
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
 RANKING_TOP_N = 20
 RATING_TOP_N = 20
-RATING_SCORE_BEST = 1.0
-RATING_SCORE_MID = 0.7
-RATING_SCORE_WORST = 0.4
+RATING_SCORE_BEST = 0.9
+RATING_SCORE_MID = 0.6
+RATING_SCORE_WORST = 0.3
 
 # ── Pitch & zones ───────────────────────────────────────────────────────────
 FIELD_X, FIELD_Y = 120.0, 80.0
@@ -828,11 +828,10 @@ def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict]
         pid = player["code"]
         mins = minutes_info.get(pid, {})
         pct = mins.get("minutes_pct")
-        if pct is None or pct <= RATING_MIN_MINUTES_PCT:
-            continue
         grp = passes[passes["player_id"] == pid]
         if grp.empty:
             continue
+        eligible = pct is not None and pct > RATING_MIN_MINUTES_PCT
         metrics = compute_player_metrics(grp, mins)
         players.append({
             "player_id": pid,
@@ -842,6 +841,7 @@ def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict]
             "team": mins.get("team", "—"),
             "minutes": mins.get("minutes"),
             "minutes_pct": pct,
+            "eligible_for_rating": eligible,
             **{k: round(v, 4) if isinstance(v, float) and abs(v) < 1000 else v for k, v in metrics.items()},
         })
     return registry, players
@@ -870,6 +870,14 @@ def fmt_smart(value, *, max_decimals: int = 4) -> str:
 def fmt_stat_value(key: str, value) -> str:
     if value is None:
         return "—"
+    fixed_decimals = {
+        "impact_per_pass": 2,
+        "phi_per_pass": 3,
+        "dxt_per_pass": 3,
+        "long_impact_per_long_pass": 2,
+    }
+    if key in fixed_decimals:
+        return f"{float(value):.{fixed_decimals[key]}f}"
     if key.endswith("_pct"):
         return f"{fmt_smart(value)}%"
     if key in {

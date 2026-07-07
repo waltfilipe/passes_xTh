@@ -28,6 +28,7 @@ CONSTRUCTION_METRIC_KEYS = pe.CONSTRUCTION_METRIC_KEYS
 AGGRESSION_METRIC_KEYS = pe.AGGRESSION_METRIC_KEYS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
+RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 fmt_pct = pe.fmt_pct
@@ -54,7 +55,25 @@ st.markdown(
         padding: 1rem 1.1rem;
         margin-top: 0.2rem;
     }
-    .player-card + .player-card { margin-top: 0.65rem; }
+    .player-card + .player-card { margin-top: 0; }
+    .rating-row {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin-bottom: 0.85rem;
+    }
+    .rating-warning-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+    }
+    .rating-warning {
+        font-size: 1.2rem;
+        line-height: 1;
+        cursor: help;
+        color: #fbbf24;
+        filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.35));
+    }
     .player-card h3 { margin: 0 0 0.15rem 0; color: #f1f5f9; font-size: 1.15rem; }
     .player-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem; }
     .player-card .rating-box {
@@ -121,7 +140,8 @@ st.markdown(
     }
     .rank-tip:hover .rank-tipbox,
     .rating-tip:hover .rating-tipbox,
-    .section-rating-tip:hover .rating-tipbox {
+    .section-rating-tip:hover .rating-tipbox,
+    .rating-warning-tip:hover .rating-tipbox {
         display: block;
     }
     .stat-section-row {
@@ -268,6 +288,13 @@ function pickPlayer(pid) {{
     components.html(page, height=height, scrolling=False)
 
 
+def _is_rating_eligible(player: dict) -> bool:
+    if player.get("eligible_for_rating") is False:
+        return False
+    pct = player.get("minutes_pct")
+    return pct is not None and pct > RATING_MIN_MINUTES_PCT
+
+
 def _stat_display(player: dict, key: str) -> str:
     if key == "minutes_pct":
         pct = player.get("minutes_pct")
@@ -373,20 +400,38 @@ def _build_sections_html(
 
 
 def _rating_header_html(player: dict, metric_ranks: dict) -> str:
-    rating_txt = fmt_rating_score(player.get("pass_rating", 0))
-    rating_info = metric_ranks.get("pass_rating")
+    eligible = _is_rating_eligible(player)
+    rating_val = player.get("pass_rating")
+    rating_txt = fmt_rating_score(rating_val) if eligible and rating_val is not None else "—"
+    rating_info = metric_ranks.get("pass_rating") if eligible else None
+
     if rating_info:
         r_color = rank_color(int(rating_info["rank"]), int(rating_info["total"]))
         r_txt = _badge_text_color(r_color)
         rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
-        return (
+        rating_box = (
             f'<span class="rating-tip">'
-            f'<div class="rating-box" style="background:{r_color};color:{r_txt}">'
+            f'<div class="rating-box" style="background:{r_color};color:{r_txt};margin-bottom:0">'
             f"{html.escape(rating_txt)}</div>"
             f'<span class="rating-tipbox">{rank_txt}</span>'
             f"</span>"
         )
-    return f'<div class="rating-box" style="background:#334155;color:#f8fafc">{html.escape(rating_txt)}</div>'
+    else:
+        rating_box = (
+            f'<div class="rating-box" style="background:#334155;color:#f8fafc;margin-bottom:0">'
+            f"{html.escape(rating_txt)}</div>"
+        )
+
+    warning = ""
+    if not eligible:
+        warning = (
+            '<span class="rating-warning-tip">'
+            '<span class="rating-warning">⚠</span>'
+            '<span class="rating-tipbox">Menos de 30% dos minutos</span>'
+            "</span>"
+        )
+
+    return f'<div class="rating-row">{rating_box}{warning}</div>'
 
 
 def render_player_card(player: dict) -> None:
@@ -417,27 +462,31 @@ def render_player_card(player: dict) -> None:
         + _build_sections_html(player, metric_ranks, style_sections)
         + "</div>"
     )
-    st.markdown(card_main + card_style, unsafe_allow_html=True)
+    col_main, col_style = st.columns(2, gap="small")
+    with col_main:
+        st.markdown(card_main, unsafe_allow_html=True)
+    with col_style:
+        st.markdown(card_style, unsafe_allow_html=True)
 
 
 def render_map_section(
-    rated: list[dict],
-    rated_by_id: dict[str, dict],
+    all_players: list[dict],
+    players_by_id: dict[str, dict],
     passes_by_player: dict,
 ) -> None:
     st.subheader("Mapa — passes de impacto")
     st.caption("Clique em um jogador na tabela de rating ou selecione abaixo.")
 
-    options = _player_options(rated)
+    options = _player_options(all_players)
     if not options:
-        st.info("Nenhum jogador elegível para o mapa.")
+        st.info("Nenhum jogador com passes para o mapa.")
         return
 
     labels = [o[3] for o in options]
     id_by_label = {o[3]: o[0] for o in options}
     label_by_id = {o[0]: o[3] for o in options}
 
-    _sync_selection_from_query(rated_by_id)
+    _sync_selection_from_query(players_by_id)
     map_player_id = st.session_state.get("map_player_id")
     default_index = None
     if map_player_id and map_player_id in label_by_id:
@@ -458,7 +507,7 @@ def render_map_section(
         return
 
     player_id = st.session_state["map_player_id"]
-    player = rated_by_id[player_id]
+    player = players_by_id[player_id]
     passes = passes_by_player.get(player_id)
 
     col_map, col_info = st.columns([1.35, 1.0], gap="large")
@@ -479,8 +528,8 @@ def render_map_section(
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
     st.subheader("Rating por posição")
     st.caption(
-        "Rating = média das notas por métrica na posição (1º = 10,0 · mediano = 7,0 · último = 4,0). "
-        "Elegível: >30% dos jogos do time. Clique na linha para ver o mapa; passe o mouse nos quadradinhos e ratings do card para ver o ranking."
+        "Rating = média das notas por métrica na posição (1º = 9,0 · mediano = 6,0 · último = 3,0). "
+        "Elegível: >30% dos minutos. Clique na linha para ver o mapa; passe o mouse nos quadradinhos e ratings do card para ver o ranking."
     )
     for group in POSITION_GROUPS_ORDER:
         subset = sorted(
@@ -509,14 +558,22 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
 
 def main() -> None:
     with st.spinner("Carregando dados…"):
-        _, players = load_analytics()
+        _, all_players = load_analytics()
         passes_by_player = load_passes()
 
-    rated = compute_pass_ratings(players)
-    rated_by_id = {p["player_id"]: p for p in rated}
+    eligible_players = [p for p in all_players if p.get("eligible_for_rating")]
+    rated = compute_pass_ratings(eligible_players)
+    players_by_id = {p["player_id"]: dict(p) for p in all_players}
+    for player in rated:
+        players_by_id[player["player_id"]].update({
+            "pass_rating": player.get("pass_rating"),
+            "metric_ranks": player.get("metric_ranks", {}),
+            "section_ratings": player.get("section_ratings", {}),
+            "section_rating_ranks": player.get("section_rating_ranks", {}),
+        })
     selected_player_id = st.session_state.get("map_player_id")
 
-    render_map_section(rated, rated_by_id, passes_by_player)
+    render_map_section(all_players, players_by_id, passes_by_player)
     st.divider()
     render_rating_section(rated, selected_player_id=selected_player_id)
 
