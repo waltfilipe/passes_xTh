@@ -21,7 +21,7 @@ from sofascore_positions import normalize_sofascore_position
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 11
+DATA_CACHE_VERSION = 12
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -50,6 +50,8 @@ IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 # ── xT v4 classification thresholds ─────────────────────────────────────────
 XT_V3_PROG_FLOOR_CLASS = 0.12
 XT_V3_PROG_SCALE_CLASS = 0.19
+# Pass impact (tier 1) is 5% stricter; high impact (tier 2) unchanged.
+IMPACT_PROG_STRICTNESS = 1.05
 XT_V3_HIGH_FLOOR_CLASS = 0.26
 XT_V3_HIGH_SCALE_CLASS = 0.45
 
@@ -321,7 +323,7 @@ def _impact_tier_vec(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
     pos = delta_xt > 0
     if not pos.any():
         return tier
-    prog = np.maximum(XT_V3_PROG_FLOOR_CLASS, XT_V3_PROG_SCALE_CLASS * (1.0 - xt_start))
+    prog = np.maximum(XT_V3_PROG_FLOOR_CLASS, XT_V3_PROG_SCALE_CLASS * (1.0 - xt_start)) * IMPACT_PROG_STRICTNESS
     high = np.maximum(XT_V3_HIGH_FLOOR_CLASS, XT_V3_HIGH_SCALE_CLASS * (1.0 - xt_start))
     tier[pos & (delta_xt > prog) & (delta_xt <= high)] = 1
     tier[pos & (delta_xt > high)] = 2
@@ -413,7 +415,6 @@ def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
         "position": frame["position"].map(_normalize_position) if "position" in frame.columns else DEFAULT_PLAYER_POSITION,
         "is_success": _parse_bool_series(frame["outcome"]) if "outcome" in frame.columns else False,
         "is_key_pass": _parse_bool_series(frame["keypass"]) if "keypass" in frame.columns else False,
-        "is_long_ball": _parse_bool_series(frame["isLongBall"]) if "isLongBall" in frame.columns else False,
         "action_type": frame["eventActionType"].astype(str).str.strip().str.lower(),
         "x_start": sx,
         "y_start": sy,
@@ -427,6 +428,7 @@ def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
         np.sqrt((out["x_end"] - out["x_start"]) ** 2 + (out["y_end"] - out["y_start"]) ** 2),
         0.0,
     )
+    out["is_long_ball"] = out["has_end"] & (out["pass_distance"] >= LONG_PASS_MIN_DISTANCE_M)
 
     mask = out["has_end"].to_numpy()
     if mask.any():
@@ -613,10 +615,7 @@ def _derive_rates(stats: dict, minutes: float | None) -> dict:
 
 
 def _long_ball_mask(passes: pd.DataFrame) -> pd.Series:
-    sofa = passes["is_long_ball"].fillna(False)
-    if bool(sofa.any()):
-        return sofa
-    return passes["pass_distance"] > LONG_PASS_MIN_DISTANCE_M
+    return passes["is_long_ball"].fillna(False)
 
 
 def compute_player_metrics(passes: pd.DataFrame, minutes_info: dict) -> dict:
@@ -743,14 +742,38 @@ def metric_label(key: str) -> str:
     return TOOLTIP_LABELS.get(key, key.replace("_", " ").title())
 
 
+def fmt_smart(value, *, max_decimals: int = 4) -> str:
+    """Adaptive decimals: extend when 1 dp rounds to 0.0 on a non-zero value."""
+    if value is None:
+        return "—"
+    v = float(value)
+    if v == 0.0:
+        return "0.0"
+    if abs(v - round(v)) < 1e-9 and abs(v) >= 1.0:
+        return str(int(round(v)))
+    for decimals in range(1, max_decimals + 1):
+        text = f"{v:.{decimals}f}"
+        if decimals == max_decimals or float(text) != 0.0:
+            return text
+    return f"{v:.{max_decimals}f}"
+
+
 def fmt_stat_value(key: str, value) -> str:
     if value is None:
         return "—"
     if key.endswith("_pct"):
-        return f"{float(value):.1f}%"
+        return f"{fmt_smart(value)}%"
+    if key in {
+        "minutes", "passes_completed", "long_balls", "long_balls_completed",
+        "long_impact_passes", "impact_passes", "high_impact_passes",
+        "construction_aip", "aggression_aip", "construction_passes", "aggression_passes",
+    }:
+        return fmt_smart(value, max_decimals=1) if float(value) == int(float(value)) else fmt_smart(value)
+    if "per_" in key or key.endswith("_p90"):
+        return fmt_smart(value)
     if isinstance(value, float):
-        return f"{float(value):.1f}"
-    return f"{float(value):.1f}" if isinstance(value, (int, float)) else str(value)
+        return fmt_smart(value)
+    return fmt_smart(value) if isinstance(value, (int, float)) else str(value)
 
 
 def fmt_metric_value(key: str, value) -> str:
@@ -758,16 +781,8 @@ def fmt_metric_value(key: str, value) -> str:
 
 
 def fmt_count(value) -> str:
-    if value is None:
-        return "—"
-    return f"{float(value):.1f}"
-
-
-def fmt_decimal(value, *, decimals: int = 3) -> str:
-    if value is None:
-        return "—"
-    return f"{float(value):.{decimals}f}"
+    return fmt_smart(value, max_decimals=1)
 
 
 def fmt_pct(value: float) -> str:
-    return f"{value:.1f}%"
+    return f"{fmt_smart(value)}%"

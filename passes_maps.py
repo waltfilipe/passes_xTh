@@ -18,8 +18,8 @@ FIG_W_COMPACT, FIG_H_COMPACT = 4.5, 3.0
 FIG_DPI_COMPACT = 320
 MAP_REF_WIDTH = 7.2
 FIELD_X, FIELD_Y = 120.0, 80.0
-PASS_DEST_HEATMAP_COLS = 6
-PASS_DEST_HEATMAP_ROWS = 4
+PASS_DEST_HEATMAP_COLS = 24
+PASS_DEST_HEATMAP_ROWS = 16
 ARROW_WIDTH = 0.75
 ARROW_HEADWIDTH = 1.15
 ARROW_HEADLENGTH = 1.15
@@ -160,7 +160,7 @@ def draw_pass_destination_heatmap(
     *,
     compact: bool = True,
 ):
-    """6×4 heatmap of completed pass end locations."""
+    """24×16 heatmap of completed pass end locations."""
     if compact:
         figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
         dpi = FIG_DPI_COMPACT
@@ -193,7 +193,6 @@ def draw_pass_destination_heatmap(
 
     vmax = max(float(grid.max()), 1.0)
     norm = Normalize(vmin=0.0, vmax=vmax)
-    threshold = vmax * 0.45
 
     for iy in range(PASS_DEST_HEATMAP_ROWS):
         for ix in range(PASS_DEST_HEATMAP_COLS):
@@ -204,29 +203,22 @@ def draw_pass_destination_heatmap(
                 Rectangle(
                     (x0, y0), x1 - x0, y1 - y0,
                     facecolor=CMAP_PASS_DEST(norm(value)),
-                    edgecolor=(1, 1, 1, 0.22),
-                    linewidth=0.5,
+                    edgecolor=(1, 1, 1, 0.12),
+                    linewidth=0.25,
                     alpha=0.94,
                     zorder=2,
                 )
             )
-            if value > 0:
-                ax.text(
-                    (x0 + x1) / 2, (y0 + y1) / 2, f"{value:.1f}",
-                    ha="center", va="center",
-                    color="#000000" if value <= threshold else "#ffffff",
-                    fontsize=6.8 * scale, fontweight="600", zorder=4,
-                )
 
     pitch.draw(ax=ax)
     sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
     cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
-    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.1f}"))
+    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
     cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
     plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
     cbar.set_label("Passes", color="#c7cdda", fontsize=7 * scale)
     ax.set_title(
-        f"{player_name}\nDestino dos passes · 6×4 · {match_label}",
+        f"{player_name}\nDestino dos passes · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
         color="white", fontsize=8.2 * scale, pad=5,
     )
     _attack_arrow(fig, fig_w=fig_w)

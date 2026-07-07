@@ -18,6 +18,7 @@ from passes_engine import (
     build_analytics,
     compute_pass_ratings,
     fmt_pct,
+    fmt_smart,
     fmt_stat_value,
     load_passes_grouped,
     metric_label,
@@ -56,14 +57,20 @@ st.markdown(
         color: #cbd5e1;
     }
     .metric-line span:last-child { color: #e2e8f0; font-weight: 600; white-space: nowrap; }
-    .val-wrap { display: inline-flex; align-items: center; gap: 0.4rem; }
-    .rank-swatch {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 2px;
+    .val-wrap { display: inline-flex; align-items: center; gap: 0.45rem; }
+    .rank-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        height: 24px;
+        padding: 0 6px;
+        border-radius: 5px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
         flex-shrink: 0;
-        border: 1px solid rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.14);
     }
     .stat-section {
         margin-top: 0.65rem;
@@ -230,16 +237,30 @@ def _stat_display(player: dict, key: str) -> str:
     return fmt_stat_value(key, player.get(key))
 
 
+def _badge_text_color(hex_color: str) -> str:
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#0f172a" if lum > 145 else "#f8fafc"
+
+
 def _metric_line_html(label: str, key: str, value: str, metric_ranks: dict) -> str:
-    swatch = ""
+    badge = ""
     info = metric_ranks.get(key)
     if info:
-        color = rank_color(int(info["rank"]), int(info["total"]))
-        swatch = f'<span class="rank-swatch" style="background:{color}"></span>'
+        rank = int(info["rank"])
+        total = int(info["total"])
+        color = rank_color(rank, total)
+        txt = _badge_text_color(color)
+        badge = (
+            f'<span class="rank-badge" style="background:{color};color:{txt}">'
+            f"{rank}/{total}</span>"
+        )
     return (
         '<div class="metric-line">'
         f"<span>{html.escape(label)}</span>"
-        f'<span class="val-wrap">{swatch}{html.escape(value)}</span>'
+        f'<span class="val-wrap">{badge}{html.escape(value)}</span>'
         "</div>"
     )
 
@@ -263,7 +284,7 @@ def render_player_card(player: dict) -> None:
         '<div class="player-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f'<div class="rating">{player.get("pass_rating", 0):.1f}</div>'
+        f'<div class="rating">{fmt_smart(player.get("pass_rating", 0))}</div>'
         + "".join(metrics_html)
         + "</div>"
     )
