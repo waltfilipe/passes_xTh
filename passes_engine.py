@@ -21,7 +21,7 @@ from sofascore_positions import normalize_sofascore_position
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 8
+DATA_CACHE_VERSION = 9
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -37,9 +37,7 @@ FINAL_THIRD_LINE_X = 80.0
 GOAL_X, GOAL_Y = 120.0, 40.0
 WYSCOUT_PITCH_SIZE = 100.0
 PASS_AGGRESSION_X_MIN = FIELD_X - 30.0
-LONG_PASS_MIN_DISTANCE_M = 30.0
 DXT_IMPACT_THRESHOLD = 0.1
-TOP_IMPACT_SOMXT_N = 20
 DEFAULT_PLAYER_POSITION = "CM"
 
 WYSCOUT_PROG_OWN_HALF = 30.0
@@ -82,18 +80,14 @@ XT_V4_BOX_X_START = 90.0
 
 RANKING_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("All-around pass efficiency and impact", (
-        "impact_passes_p90", "impact_per_pass", "impact_eff_pct",
-        "phi_p90", "phi_per_pass", "phi_eff_pct",
+        "impact_passes_p90", "impact_per_pass",
+        "phi_p90", "phi_per_pass",
     )),
     ("How much impact", ("dxt_p90", "dxt_per_pass")),
     ("How often impact", ("dxt_gt_01_pct",)),
-    ("Top impact", ("sum_xt_end_top20_passes",)),
     ("Construction & aggression efficiency", (
         "construction_aip", "construction_aip_per_pass",
         "aggression_aip", "aggression_aip_per_pass",
-    )),
-    ("Long balls (>30 m) efficiency & impact", (
-        "long_impact_passes_p90", "long_impact_per_long_pass", "long_impact_eff_pct",
     )),
 )
 
@@ -104,21 +98,15 @@ RATING_METRIC_KEYS: tuple[str, ...] = tuple(
 METRIC_LABELS: dict[str, str] = {
     "impact_passes_p90": "Passes Impact p90",
     "impact_per_pass": "Passes Impact / Pass",
-    "impact_eff_pct": "% Eff Pass Impact",
     "phi_p90": "PHI p90",
     "phi_per_pass": "PHI / Pass",
-    "phi_eff_pct": "% Eff PHI",
     "dxt_p90": "ΔxT p90",
     "dxt_per_pass": "ΔxT / Pass",
     "dxt_gt_01_pct": "% passes ΔxT > 0.1",
-    "sum_xt_end_top20_passes": "Top 20 Σ xT",
     "construction_aip": "Construction AIP",
     "construction_aip_per_pass": "Construction AIP / Construction Passes",
     "aggression_aip": "Aggression AIP",
     "aggression_aip_per_pass": "Aggression AIP / Aggression Passes",
-    "long_impact_passes_p90": "Long Passes Impact p90",
-    "long_impact_per_long_pass": "Long Passes Impact / Long Passes",
-    "long_impact_eff_pct": "% Eff Long Passes Impact",
 }
 
 
@@ -395,7 +383,6 @@ def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
         "position": frame["position"].map(_normalize_position) if "position" in frame.columns else DEFAULT_PLAYER_POSITION,
         "is_success": _parse_bool_series(frame["outcome"]) if "outcome" in frame.columns else False,
         "is_key_pass": _parse_bool_series(frame["keypass"]) if "keypass" in frame.columns else False,
-        "is_long_ball": _parse_bool_series(frame["isLongBall"]) if "isLongBall" in frame.columns else False,
         "action_type": frame["eventActionType"].astype(str).str.strip().str.lower(),
         "x_start": sx,
         "y_start": sy,
@@ -554,14 +541,8 @@ def _pass_layer_metrics(passes: pd.DataFrame) -> dict:
     xt = passes[passes["has_end"]]
     impact = _accuracy(passes["impact_attempt"], passes["impact_success"])
     high = _accuracy(passes["high_impact_attempt"], passes["high_impact_success"])
-    prog = _accuracy(passes["is_progressive_wyscout"], passes["prog_success"])
 
-    pos_pct = float((xt["delta_xt_v4"] > 0).mean() * 100.0) if len(xt) else 0.0
     dxt_gt_01_pct = float((xt["delta_xt_v4"] > DXT_IMPACT_THRESHOLD).mean() * 100.0) if len(xt) else 0.0
-
-    positive = completed[completed["has_end"] & (completed["delta_xt_v4"] > 0)]
-    top20 = positive.nlargest(TOP_IMPACT_SOMXT_N, "delta_xt_v4") if not positive.empty else positive
-    sum_top20 = float(top20["xt_end_v4"].sum()) if not top20.empty else 0.0
 
     construction = _zone_metrics(passes, True)
     aggression = _zone_metrics(passes, False)
@@ -580,11 +561,8 @@ def _pass_layer_metrics(passes: pd.DataFrame) -> dict:
         "sum_dxt_passes": float(passes["delta_xt_v4"].sum()),
         "sum_xt_end_passes": float(completed["xt_end_v4"].sum()) if not completed.empty else 0.0,
         "dxt_gt_01_pct": round(dxt_gt_01_pct, 1),
-        "sum_xt_end_top20_passes": sum_top20,
         "impact_per_pass": _safe_ratio(impact["successful"], total),
         "phi_per_pass": _safe_ratio(high["successful"], total),
-        "impact_eff_pct": impact["accuracy_pct"],
-        "phi_eff_pct": high["accuracy_pct"],
         "dxt_per_pass": _safe_ratio(float(passes["delta_xt_v4"].sum()), int(len(completed))),
         "construction_aip": int(construction_aip),
         "construction_aip_per_pass": _safe_ratio(construction_aip, construction["passes"]),
@@ -600,18 +578,11 @@ def _derive_rates(stats: dict, minutes: float | None) -> dict:
     out["impact_passes_p90"] = _per90(stats.get("impact_passes", 0), minutes)
     out["phi_p90"] = _per90(stats.get("high_impact_passes", 0), minutes)
     out["dxt_p90"] = _per90(stats.get("sum_dxt_passes", 0), minutes)
-    out["long_impact_passes_p90"] = _per90(stats.get("long_impact_passes", 0), minutes)
-    out["long_impact_eff_pct"] = stats.get("long_impact_accuracy_pct", 0)
-    long_total = stats.get("long_passes_total", 0) or 0
-    out["long_impact_per_long_pass"] = _safe_ratio(stats.get("long_impact_passes", 0), long_total)
     return out
 
 
 def compute_player_metrics(passes: pd.DataFrame, minutes_info: dict) -> dict:
-    all_layer = _pass_layer_metrics(passes)
-    long_passes = passes[passes["pass_distance"] > LONG_PASS_MIN_DISTANCE_M]
-    long_layer = {f"long_{k}": v for k, v in _pass_layer_metrics(long_passes).items()}
-    stats = {**all_layer, **long_layer}
+    stats = _pass_layer_metrics(passes)
     minutes = minutes_info.get("minutes")
     return _derive_rates(stats, minutes)
 
