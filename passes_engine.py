@@ -21,7 +21,7 @@ from sofascore_positions import normalize_sofascore_position
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 10
+DATA_CACHE_VERSION = 11
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -37,6 +37,7 @@ FINAL_THIRD_LINE_X = 80.0
 GOAL_X, GOAL_Y = 120.0, 40.0
 WYSCOUT_PITCH_SIZE = 100.0
 PASS_AGGRESSION_X_MIN = FIELD_X - 30.0
+LONG_PASS_MIN_DISTANCE_M = 30.0
 DXT_IMPACT_THRESHOLD = 0.1
 DEFAULT_PLAYER_POSITION = "CM"
 
@@ -111,10 +112,31 @@ METRIC_LABELS: dict[str, str] = {
 
 TOOLTIP_EXTRA_KEYS: tuple[str, ...] = ("minutes", "passes_completed")
 
+LONG_BALL_STAT_KEYS: tuple[str, ...] = (
+    "long_balls",
+    "long_balls_completed",
+    "long_impact_passes",
+    "long_impact_per_long_pass",
+    "long_impact_eff_pct",
+)
+
+RANK_DISPLAY_KEYS: tuple[str, ...] = (
+    *TOOLTIP_EXTRA_KEYS,
+    "minutes_pct",
+    *LONG_BALL_STAT_KEYS,
+    *RATING_METRIC_KEYS,
+)
+
 TOOLTIP_LABELS: dict[str, str] = {
     **METRIC_LABELS,
     "minutes": "Minutos",
     "passes_completed": "Passes",
+    "minutes_pct": "Min %",
+    "long_balls": "Long balls (>30 m)",
+    "long_balls_completed": "Long balls completados",
+    "long_impact_passes": "Long balls impact",
+    "long_impact_per_long_pass": "Long impact / long ball",
+    "long_impact_eff_pct": "% eff long impact",
 }
 
 
@@ -391,6 +413,7 @@ def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
         "position": frame["position"].map(_normalize_position) if "position" in frame.columns else DEFAULT_PLAYER_POSITION,
         "is_success": _parse_bool_series(frame["outcome"]) if "outcome" in frame.columns else False,
         "is_key_pass": _parse_bool_series(frame["keypass"]) if "keypass" in frame.columns else False,
+        "is_long_ball": _parse_bool_series(frame["isLongBall"]) if "isLongBall" in frame.columns else False,
         "action_type": frame["eventActionType"].astype(str).str.strip().str.lower(),
         "x_start": sx,
         "y_start": sy,
@@ -589,8 +612,29 @@ def _derive_rates(stats: dict, minutes: float | None) -> dict:
     return out
 
 
+def _long_ball_mask(passes: pd.DataFrame) -> pd.Series:
+    sofa = passes["is_long_ball"].fillna(False)
+    if bool(sofa.any()):
+        return sofa
+    return passes["pass_distance"] > LONG_PASS_MIN_DISTANCE_M
+
+
 def compute_player_metrics(passes: pd.DataFrame, minutes_info: dict) -> dict:
     stats = _pass_layer_metrics(passes)
+    long_passes = passes[_long_ball_mask(passes)]
+    stats["long_balls"] = int(len(long_passes))
+    stats["long_balls_completed"] = int(long_passes["is_success"].sum()) if not long_passes.empty else 0
+    if long_passes.empty:
+        stats["long_impact_passes"] = 0
+        stats["long_impact_eff_pct"] = 0.0
+        stats["long_impact_per_long_pass"] = 0.0
+    else:
+        long_layer = _pass_layer_metrics(long_passes)
+        stats["long_impact_passes"] = int(long_layer.get("impact_passes", 0))
+        stats["long_impact_eff_pct"] = float(long_layer.get("impact_accuracy_pct", 0.0))
+        stats["long_impact_per_long_pass"] = _safe_ratio(
+            stats["long_impact_passes"], stats["long_balls"],
+        )
     minutes = minutes_info.get("minutes")
     return _derive_rates(stats, minutes)
 
@@ -607,7 +651,7 @@ def _metric_ranks_for_pool(pool: list[dict]) -> dict[str, dict[str, dict]]:
     n = len(pool)
     if n == 0:
         return {}
-    keys = list(RATING_METRIC_KEYS) + list(TOOLTIP_EXTRA_KEYS)
+    keys = list(RANK_DISPLAY_KEYS)
     out: dict[str, dict[str, dict]] = {p["player_id"]: {} for p in pool}
     for key in keys:
         ordered = sorted(pool, key=lambda p: p.get(key, 0) or 0, reverse=True)
@@ -699,22 +743,24 @@ def metric_label(key: str) -> str:
     return TOOLTIP_LABELS.get(key, key.replace("_", " ").title())
 
 
-def fmt_metric_value(key: str, value) -> str:
+def fmt_stat_value(key: str, value) -> str:
     if value is None:
         return "—"
     if key.endswith("_pct"):
         return f"{float(value):.1f}%"
-    if key.endswith("_p90"):
-        return f"{float(value):.3f}"
     if isinstance(value, float):
-        return f"{float(value):.4f}" if "per_" in key else f"{float(value):.3f}"
-    return str(int(value))
+        return f"{float(value):.1f}"
+    return f"{float(value):.1f}" if isinstance(value, (int, float)) else str(value)
+
+
+def fmt_metric_value(key: str, value) -> str:
+    return fmt_stat_value(key, value)
 
 
 def fmt_count(value) -> str:
     if value is None:
         return "—"
-    return str(int(value))
+    return f"{float(value):.1f}"
 
 
 def fmt_decimal(value, *, decimals: int = 3) -> str:

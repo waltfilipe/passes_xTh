@@ -9,6 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from passes_engine import (
+    LONG_BALL_STAT_KEYS,
     POSITION_GROUPS_ORDER,
     RATING_METRIC_KEYS,
     RATING_TOP_N,
@@ -16,13 +17,12 @@ from passes_engine import (
     TOOLTIP_LABELS,
     build_analytics,
     compute_pass_ratings,
-    fmt_count,
-    fmt_metric_value,
     fmt_pct,
+    fmt_stat_value,
     load_passes_grouped,
     metric_label,
 )
-from passes_maps import draw_impact_pass_map
+from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
 st.set_page_config(page_title="Passes xTh", layout="wide")
 
@@ -56,6 +56,24 @@ st.markdown(
         color: #cbd5e1;
     }
     .metric-line span:last-child { color: #e2e8f0; font-weight: 600; white-space: nowrap; }
+    .val-wrap { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .rank-swatch {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.15);
+    }
+    .stat-section {
+        margin-top: 0.65rem;
+        margin-bottom: 0.2rem;
+        color: #7dd3fc;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -205,24 +223,47 @@ function pickPlayer(pid) {{
     components.html(page, height=height, scrolling=False)
 
 
+def _stat_display(player: dict, key: str) -> str:
+    if key == "minutes_pct":
+        pct = player.get("minutes_pct")
+        return fmt_pct(pct * 100.0) if pct is not None else "—"
+    return fmt_stat_value(key, player.get(key))
+
+
+def _metric_line_html(label: str, key: str, value: str, metric_ranks: dict) -> str:
+    swatch = ""
+    info = metric_ranks.get(key)
+    if info:
+        color = rank_color(int(info["rank"]), int(info["total"]))
+        swatch = f'<span class="rank-swatch" style="background:{color}"></span>'
+    return (
+        '<div class="metric-line">'
+        f"<span>{html.escape(label)}</span>"
+        f'<span class="val-wrap">{swatch}{html.escape(value)}</span>'
+        "</div>"
+    )
+
+
 def render_player_card(player: dict) -> None:
-    pct = player.get("minutes_pct")
-    pct_txt = fmt_pct(pct * 100.0) if pct is not None else "—"
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    sections: list[tuple[str, tuple[str, ...]]] = [
+        ("Geral", ("minutes", "passes_completed", "minutes_pct")),
+        ("Long balls", LONG_BALL_STAT_KEYS),
+        ("Métricas", RATING_METRIC_KEYS),
+    ]
     metrics_html = []
-    for key in RATING_METRIC_KEYS:
-        label = metric_label(key)
-        value = fmt_metric_value(key, player.get(key))
-        metrics_html.append(
-            f'<div class="metric-line"><span>{html.escape(label)}</span><span>{html.escape(value)}</span></div>'
-        )
+    for title, keys in sections:
+        metrics_html.append(f'<div class="stat-section">{html.escape(title)}</div>')
+        for key in keys:
+            metrics_html.append(
+                _metric_line_html(metric_label(key), key, _stat_display(player, key), metric_ranks)
+            )
+
     card = (
         '<div class="player-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f'<div class="rating">{player.get("pass_rating", 0):.3f}</div>'
-        f'<div class="metric-line"><span>Minutos</span><span>{html.escape(fmt_count(player.get("minutes")))}</span></div>'
-        f'<div class="metric-line"><span>Passes</span><span>{html.escape(fmt_count(player.get("passes_completed")))}</span></div>'
-        f'<div class="metric-line"><span>Min %</span><span>{html.escape(pct_txt)}</span></div>'
+        f'<div class="rating">{player.get("pass_rating", 0):.1f}</div>'
         + "".join(metrics_html)
         + "</div>"
     )
@@ -277,6 +318,10 @@ def render_map_section(
         else:
             fig = draw_impact_pass_map(passes, player["player_name"], player.get("team", "—"))
             st.pyplot(fig, clear_figure=True, use_container_width=False)
+            fig_heat = draw_pass_destination_heatmap(
+                passes, player["player_name"], player.get("team", "—"),
+            )
+            st.pyplot(fig_heat, clear_figure=True, use_container_width=False)
     with col_info:
         render_player_card(player)
 
