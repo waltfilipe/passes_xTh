@@ -501,7 +501,18 @@ def render_player_layout(player: dict, passes) -> None:
             st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
 
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Geral", None, ("minutes", "passes_completed", "minutes_pct"), False),
+        (
+            "Geral",
+            None,
+            (
+                "minutes",
+                "passes_completed",
+                "minutes_pct",
+                "impact_passes",
+                "high_impact_passes",
+            ),
+            False,
+        ),
     ]
     abs_rel_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),

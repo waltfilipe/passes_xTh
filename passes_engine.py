@@ -176,6 +176,8 @@ TOOLTIP_LABELS: dict[str, str] = {
     "minutes": "Minutos",
     "passes_completed": "Passes",
     "minutes_pct": "Min %",
+    "impact_passes": "Passes Impact",
+    "high_impact_passes": "Passes High Impact",
     "long_impact_passes": "Long balls impact",
     "long_impact_per_long_pass": "Long impact / long ball",
 }
