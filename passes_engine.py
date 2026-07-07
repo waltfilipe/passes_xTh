@@ -33,7 +33,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 20
+DATA_CACHE_VERSION = 21
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -124,6 +124,12 @@ METRIC_LABELS: dict[str, str] = {
     "construction_aip_per_pass": "Construction AIP / Construction Passes",
     "aggression_aip": "Aggression AIP",
     "aggression_aip_per_pass": "Aggression AIP / Aggression Passes",
+    "progressive_passes_p90": "Passes Progressivos p90",
+    "progressive_passes": "Passes Progressivos",
+    "final_third_passes_p90": "Passes para Terço Final p90",
+    "final_third_passes": "Passes para Terço Final",
+    "key_passes": "Key Passes",
+    "long_balls": "Long Passes",
 }
 
 TOOLTIP_EXTRA_KEYS: tuple[str, ...] = ("minutes", "passes_completed")
@@ -155,6 +161,29 @@ LONG_BALL_STAT_KEYS: tuple[str, ...] = (
     "long_impact_passes",
     "long_impact_per_long_pass",
 )
+
+COMPARISON_IMPACT_KEYS: tuple[str, ...] = (
+    "impact_passes_p90",
+    "phi_p90",
+    "long_impact_passes",
+    "impact_passes",
+    "high_impact_passes",
+    "aggression_aip",
+)
+
+COMPARISON_PROGRESSION_KEYS: tuple[str, ...] = (
+    "progressive_passes_p90",
+    "final_third_passes_p90",
+    "long_balls",
+    "progressive_passes",
+    "final_third_passes",
+    "key_passes",
+)
+
+COMPARISON_CARD_GROUPS: dict[str, tuple[str, ...]] = {
+    "comparison_impact": COMPARISON_IMPACT_KEYS,
+    "comparison_progression": COMPARISON_PROGRESSION_KEYS,
+}
 
 SECTION_RATING_GROUPS: dict[str, tuple[str, ...]] = {
     "metrics_absolute": ABSOLUTE_METRIC_KEYS,
@@ -746,6 +775,11 @@ def _pass_layer_metrics(passes: pd.DataFrame) -> dict:
     aggression = _zone_metrics(passes, False)
     construction_aip = construction["impact_passes"] + construction["high_impact_passes"]
     aggression_aip = aggression["impact_passes"] + aggression["high_impact_passes"]
+    progressive_passes = int(passes["prog_success"].sum())
+    final_third_passes = int(
+        (passes["has_end"] & (passes["x_end"] >= FINAL_THIRD_LINE_X) & passes["is_success"]).sum()
+    )
+    key_passes = int((passes["is_success"] & passes["is_key_pass"]).sum())
 
     return {
         "passes_total": total,
@@ -768,6 +802,9 @@ def _pass_layer_metrics(passes: pd.DataFrame) -> dict:
         "aggression_aip_per_pass": _safe_ratio(aggression_aip, aggression["passes"]),
         "construction_passes": construction["passes"],
         "aggression_passes": aggression["passes"],
+        "progressive_passes": progressive_passes,
+        "final_third_passes": final_third_passes,
+        "key_passes": key_passes,
     }
 
 
@@ -776,6 +813,8 @@ def _derive_rates(stats: dict, minutes: float | None) -> dict:
     out["impact_passes_p90"] = _per90(stats.get("impact_passes", 0), minutes)
     out["phi_p90"] = _per90(stats.get("high_impact_passes", 0), minutes)
     out["dxt_p90"] = _per90(stats.get("sum_dxt_passes", 0), minutes)
+    out["progressive_passes_p90"] = _per90(stats.get("progressive_passes", 0), minutes)
+    out["final_third_passes_p90"] = _per90(stats.get("final_third_passes", 0), minutes)
     return out
 
 
@@ -1110,6 +1149,144 @@ def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dic
     return rated_pool, players_by_id, pool_by_position
 
 
+def _metric_ranks_for_keys(pool: list[dict], keys: tuple[str, ...]) -> dict[str, dict[str, dict]]:
+    n = len(pool)
+    if n == 0:
+        return {}
+    out: dict[str, dict[str, dict]] = {p["player_id"]: {} for p in pool}
+    for key in keys:
+        ordered = sorted(pool, key=lambda p: p.get(key, 0) or 0, reverse=True)
+        for rank, player in enumerate(ordered, start=1):
+            out[player["player_id"]][key] = {
+                "rank": rank,
+                "total": n,
+                "value": player.get(key),
+            }
+    return out
+
+
+def _card_rating_from_metric_ranks(metric_ranks: dict[str, dict], keys: tuple[str, ...]) -> float:
+    scores = [
+        _rank_to_rating_score(metric_ranks[key]["rank"], metric_ranks[key]["total"])
+        for key in keys
+        if key in metric_ranks
+    ]
+    return round(sum(scores) / len(scores), 4) if scores else RATING_SCORE_MID
+
+
+def _rate_comparison_card_pool(pool: list[dict], section_key: str, keys: tuple[str, ...]) -> dict[str, dict]:
+    """Attach comparison card rating + per-metric ranks for one card within a position pool."""
+    pool_size = len(pool)
+    if pool_size == 0:
+        return {}
+    metric_ranks = _metric_ranks_for_keys(pool, keys)
+    card_ratings: dict[str, float] = {}
+    for player in pool:
+        ranks = metric_ranks[player["player_id"]]
+        card_ratings[player["player_id"]] = _card_rating_from_metric_ranks(ranks, keys)
+
+    ordered_cards = sorted(card_ratings.items(), key=lambda item: item[1], reverse=True)
+    card_rank_by_player: dict[str, dict] = {}
+    for rank, (pid, value) in enumerate(ordered_cards, start=1):
+        card_rank_by_player[pid] = {"rank": rank, "total": pool_size, "value": value}
+
+    out: dict[str, dict] = {}
+    for player in pool:
+        pid = player["player_id"]
+        out[pid] = {
+            "card_rating": card_ratings[pid],
+            "card_rank": card_rank_by_player[pid],
+            "metric_ranks": metric_ranks[pid],
+        }
+    return out
+
+
+def _solo_comparison_card(player: dict, section_key: str, keys: tuple[str, ...]) -> dict:
+    metric_ranks = {
+        key: {"rank": 1, "total": 1, "value": player.get(key)}
+        for key in keys
+    }
+    card_rating = _card_rating_from_metric_ranks(metric_ranks, keys)
+    return {
+        "card_rating": card_rating,
+        "card_rank": {"rank": 1, "total": 1, "value": card_rating},
+        "metric_ranks": metric_ranks,
+        "rating_is_solo": True,
+        "rating_is_compared": False,
+    }
+
+
+def rate_comparison_player_vs_pool(
+    player: dict,
+    eligible_pool: list[dict],
+    section_key: str,
+    keys: tuple[str, ...],
+) -> dict:
+    """Rate one comparison card for a non-pool player against eligible peers in the same group."""
+    if not eligible_pool:
+        return _solo_comparison_card(player, section_key, keys)
+
+    pool_size = len(eligible_pool)
+
+    def rank_for_key(key: str) -> dict:
+        value = player.get(key)
+        rank = 1 + sum(1 for peer in eligible_pool if (peer.get(key) or 0) > (value or 0))
+        return {"rank": rank, "total": pool_size, "value": value}
+
+    metric_ranks = {key: rank_for_key(key) for key in keys}
+    card_rating = _card_rating_from_metric_ranks(metric_ranks, keys)
+    card_rank = 1 + sum(
+        1 for peer in eligible_pool
+        if (peer.get("comparison_cards", {}).get(section_key, {}).get("card_rating", 0) or 0) > card_rating
+    )
+    return {
+        "card_rating": card_rating,
+        "card_rank": {"rank": card_rank, "total": pool_size, "value": card_rating},
+        "metric_ranks": metric_ranks,
+        "rating_is_solo": False,
+        "rating_is_compared": True,
+    }
+
+
+def compute_comparison_ratings(
+    players: list[dict],
+) -> tuple[dict[str, dict], dict[str, list[dict]]]:
+    """Return players indexed by id (with comparison_cards) and eligible pools by position group."""
+    enriched = enrich_player_eligibility(players)
+    pool_players = [p for p in enriched if p.get("eligible_for_rating")]
+
+    by_group: dict[str, list[dict]] = {}
+    for player in pool_players:
+        by_group.setdefault(str(player.get("position_group") or "—"), []).append(player)
+
+    pool_by_group: dict[str, list[dict]] = {}
+    comparison_by_player: dict[str, dict[str, dict]] = {}
+
+    for group, group_players in by_group.items():
+        pool_entries: list[dict] = []
+        for section_key, keys in COMPARISON_CARD_GROUPS.items():
+            card_data = _rate_comparison_card_pool(group_players, section_key, keys)
+            for pid, payload in card_data.items():
+                comparison_by_player.setdefault(pid, {})[section_key] = {
+                    **payload,
+                    "rating_is_solo": False,
+                    "rating_is_compared": False,
+                }
+
+        for player in group_players:
+            pid = player["player_id"]
+            cards = comparison_by_player.get(pid, {})
+            pool_entries.append({**player, "comparison_cards": cards})
+        pool_by_group[group] = pool_entries
+
+    players_by_id: dict[str, dict] = {player["player_id"]: dict(player) for player in enriched}
+    for group_players in pool_by_group.values():
+        for player in group_players:
+            players_by_id[player["player_id"]] = player
+
+    return players_by_id, pool_by_group
+
+
 @functools.lru_cache(maxsize=1)
 def load_passes_grouped(cache_version: int = DATA_CACHE_VERSION) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
@@ -1195,6 +1372,7 @@ def fmt_stat_value(key: str, value) -> str:
         "minutes", "passes_completed", "long_balls", "long_balls_completed",
         "long_impact_passes", "impact_passes", "high_impact_passes",
         "construction_aip", "aggression_aip", "construction_passes", "aggression_passes",
+        "progressive_passes", "final_third_passes", "key_passes",
     }:
         return fmt_smart(value, max_decimals=1) if float(value) == int(float(value)) else fmt_smart(value)
     if "per_" in key or key.endswith("_p90"):
