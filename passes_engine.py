@@ -15,6 +15,11 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from external_models import load_markov_model
+from comparison_config import (
+    COMPARISON_CARD_GROUPS,
+    COMPARISON_IMPACT_KEYS,
+    COMPARISON_PROGRESSION_KEYS,
+)
 from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
 
 try:
@@ -161,29 +166,6 @@ LONG_BALL_STAT_KEYS: tuple[str, ...] = (
     "long_impact_passes",
     "long_impact_per_long_pass",
 )
-
-COMPARISON_IMPACT_KEYS: tuple[str, ...] = (
-    "impact_passes_p90",
-    "phi_p90",
-    "long_impact_passes",
-    "impact_passes",
-    "high_impact_passes",
-    "aggression_aip",
-)
-
-COMPARISON_PROGRESSION_KEYS: tuple[str, ...] = (
-    "progressive_passes_p90",
-    "final_third_passes_p90",
-    "long_balls",
-    "progressive_passes",
-    "final_third_passes",
-    "key_passes",
-)
-
-COMPARISON_CARD_GROUPS: dict[str, tuple[str, ...]] = {
-    "comparison_impact": COMPARISON_IMPACT_KEYS,
-    "comparison_progression": COMPARISON_PROGRESSION_KEYS,
-}
 
 SECTION_RATING_GROUPS: dict[str, tuple[str, ...]] = {
     "metrics_absolute": ABSOLUTE_METRIC_KEYS,

@@ -17,6 +17,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import passes_engine as pe
+from comparison_config import (
+    COMPARISON_CARD_GROUPS,
+    COMPARISON_IMPACT_KEYS,
+    COMPARISON_PROGRESSION_KEYS,
+)
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
@@ -29,12 +34,9 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
-COMPARISON_IMPACT_KEYS = pe.COMPARISON_IMPACT_KEYS
-COMPARISON_PROGRESSION_KEYS = pe.COMPARISON_PROGRESSION_KEYS
-COMPARISON_CARD_GROUPS = pe.COMPARISON_CARD_GROUPS
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
-compute_comparison_ratings = pe.compute_comparison_ratings
+compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
 fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
 load_passes_grouped = pe.load_passes_grouped
@@ -42,7 +44,7 @@ metric_label = pe.metric_label
 rank_to_display_score = pe.rank_to_display_score
 score_display_color = pe.score_display_color
 rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
-rate_comparison_player_vs_pool = pe.rate_comparison_player_vs_pool
+rate_comparison_player_vs_pool = getattr(pe, "rate_comparison_player_vs_pool", None)
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -609,6 +611,8 @@ def _resolve_comparison_player(
     resolved = dict(player)
     if resolved.get("eligible_for_rating"):
         return resolved
+    if rate_comparison_player_vs_pool is None:
+        return resolved
     group = str(resolved.get("position_group") or "—")
     pool = comparison_pool_by_group.get(group, [])
     cards: dict[str, dict] = {}
@@ -770,7 +774,6 @@ def main() -> None:
         passes_by_player = load_passes()
 
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
-    comparison_players_by_id, comparison_pool_by_group = compute_comparison_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
     tab_dashboard, tab_comparison = st.tabs(["Dashboard", "Comparação"])
@@ -779,11 +782,18 @@ def main() -> None:
         st.divider()
         render_rating_section(rated, selected_player_id=selected_player_id)
     with tab_comparison:
-        render_comparison_section(
-            all_players,
-            comparison_players_by_id,
-            comparison_pool_by_group,
-        )
+        if compute_comparison_ratings is None:
+            st.error(
+                "A aba Comparação precisa da versão mais recente de passes_engine.py. "
+                "Reimplante o app no Streamlit Cloud (ou reinicie o serviço) para carregar o commit mais recente."
+            )
+        else:
+            comparison_players_by_id, comparison_pool_by_group = compute_comparison_ratings(all_players)
+            render_comparison_section(
+                all_players,
+                comparison_players_by_id,
+                comparison_pool_by_group,
+            )
 
 
 if __name__ == "__main__":
