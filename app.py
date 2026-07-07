@@ -132,7 +132,6 @@ def render_rating_table(
     rows: list[dict],
     *,
     selected_player_id: str | None,
-    table_key: str,
 ) -> None:
     if not rows:
         st.info("Nenhum jogador elegível nesta posição.")
@@ -203,7 +202,7 @@ function pickPlayer(pid) {{
 </body></html>"""
 
     height = min(44 * len(rows) + 52, 920)
-    components.html(page, height=height, scrolling=False, key=f"rating_table_{table_key}")
+    components.html(page, height=height, scrolling=False)
 
 
 def render_player_card(player: dict) -> None:
