@@ -20,18 +20,22 @@ import streamlit.components.v1 as components
 import passes_engine as pe
 from comparison_config import (
     CLASSIFICATION_MODEL_DEFAULT,
-    CLASSIFICATION_MODEL_LABELS,
     COMPARISON_CARD_GROUPS,
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
     TIER_MODEL_DEFAULT,
-    TIER_MODEL_LABELS,
-    XT_SURFACE_MODE_ATUAL,
+    XT_SURFACE_MODE_DEFAULT,
     XT_SURFACE_MODE_DESCRIPTIONS,
-    XT_SURFACE_MODE_LABELS,
     normalize_classification_model,
     normalize_tier_model,
     normalize_xt_surface_mode,
+)
+from similarity_engine import (
+    SIMILARITY_METRICS_A,
+    find_similar_option_a,
+    find_similar_option_c,
+    group_serie_a_pool,
+    serie_a_search_group,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
@@ -50,10 +54,11 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
-CLASSIFICATION_MODEL_SELECT_KEY = "classification_model_select"
-TIER_MODEL_SELECT_KEY = "tier_model_select"
-XT_SURFACE_MODE_SELECT_KEY = "xt_surface_mode_select"
 XT_GRID_SELECT_KEY = "xt_grid_select_v2"
+SIMILARITY_SELECT_KEY = "similarity_player_select"
+FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
+FIXED_TIER_MODEL = TIER_MODEL_DEFAULT
+FIXED_XT_SURFACE_MODE = XT_SURFACE_MODE_DEFAULT
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
@@ -73,7 +78,7 @@ def fmt_rating_score(pass_rating) -> str:
         return "—"
     return f"{float(pass_rating) * 10.0:.1f}"
 
-st.set_page_config(page_title="Passes xTh", layout="wide")
+st.set_page_config(page_title="Passes xTh", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     """
@@ -224,6 +229,7 @@ st.markdown(
         border: 1px solid rgba(255,255,255,0.18);
         white-space: nowrap;
     }
+    section[data-testid="stSidebar"] { display: none; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -285,7 +291,7 @@ def load_analytics(
     _cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
-    xt_surface_mode: str = XT_SURFACE_MODE_ATUAL,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
 ):
     return _call_build_analytics(
         _cache_version,
@@ -300,7 +306,7 @@ def load_passes(
     _cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
-    xt_surface_mode: str = XT_SURFACE_MODE_ATUAL,
+    xt_surface_mode: str = FIXED_XT_SURFACE_MODE,
 ):
     return _call_load_passes_grouped(
         _cache_version,
@@ -311,10 +317,22 @@ def load_passes(
 
 
 @st.cache_data(show_spinner=False)
-def load_xt_grid(cols: int, rows: int, xt_surface_mode: str = XT_SURFACE_MODE_ATUAL):
+def load_xt_grid(cols: int, rows: int, xt_surface_mode: str = FIXED_XT_SURFACE_MODE):
     if get_xt_quadrant_grid is None:
         return None
     return get_xt_quadrant_grid(cols, rows, xt_surface_mode=normalize_xt_surface_mode(xt_surface_mode))
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_players(_cache_version: int = DATA_CACHE_VERSION):
+    if not hasattr(pe, "build_serie_a_players"):
+        return []
+    return pe.build_serie_a_players(
+        _cache_version,
+        tier_model=FIXED_TIER_MODEL,
+        classification_model=FIXED_CLASSIFICATION_MODEL,
+        xt_surface_mode=FIXED_XT_SURFACE_MODE,
+    )
 
 
 def _norm(s: str) -> str:
@@ -871,48 +889,107 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
-def render_model_selectors() -> tuple[str, str, str]:
-    with st.sidebar:
-        st.markdown("### Superfície xT")
-        xt_surface_mode = st.selectbox(
-            "Mapa / passes",
-            options=list(XT_SURFACE_MODE_LABELS.keys()),
-            format_func=lambda key: XT_SURFACE_MODE_LABELS[key],
-            key=XT_SURFACE_MODE_SELECT_KEY,
-            label_visibility="collapsed",
-            help="\n".join(
-                f"{XT_SURFACE_MODE_LABELS[k]}: {XT_SURFACE_MODE_DESCRIPTIONS[k]}"
-                for k in XT_SURFACE_MODE_LABELS
-            ),
+def render_similarity_section(all_players: list[dict]) -> None:
+    import pandas as pd
+
+    st.subheader("Similaridade Série B → Série A")
+    st.caption(
+        "Top 5 jogadores da Série A com perfil de passe mais próximo ao selecionado na Série B. "
+        "Pool Série A: CB → Zagueiros, CM → Meio-campistas, ST → Atacantes (mín. 100 passes). "
+        "Laterais e extremos da Série B comparam com meio-campistas da Série A. "
+        "Config fixa: Opção 2 (mapa = passes) · Opção 1 + via curta · percentis p65/p85."
+    )
+
+    if not all_players:
+        st.info("Nenhum jogador disponível.")
+        return
+
+    serie_a_players = load_serie_a_players()
+    if not serie_a_players:
+        st.warning(
+            "Dados da Série A indisponíveis — confirme season_all_br.csv e reimplante o app."
         )
-        st.markdown("### Classificação xT")
-        classification_model = st.selectbox(
-            "Ajuste por distância",
-            options=list(CLASSIFICATION_MODEL_LABELS.keys()),
-            format_func=lambda key: CLASSIFICATION_MODEL_LABELS[key],
-            key=CLASSIFICATION_MODEL_SELECT_KEY,
-            label_visibility="collapsed",
-            help=(
-                "Atual: limiares uniformes de ganho relativo. "
-                "Opção 1 + via curta: ajusta limiares por distância do passe e "
-                "promove passes curtos no terço final a impact."
-            ),
+        return
+
+    serie_a_by_group = group_serie_a_pool(serie_a_players)
+    players_by_id = {str(p["player_id"]): p for p in all_players}
+    options = _player_options(all_players)
+    if not options:
+        st.info("Nenhum jogador disponível para similaridade.")
+        return
+
+    labels = [o[3] for o in options]
+    id_by_label = {o[3]: o[0] for o in options}
+    selected_label = st.selectbox(
+        "Jogador Série B",
+        options=labels,
+        key=SIMILARITY_SELECT_KEY,
+        placeholder="Selecione um jogador",
+    )
+    if not selected_label:
+        st.info("Selecione um jogador para ver similares na Série A.")
+        return
+
+    target = dict(players_by_id[id_by_label[selected_label]])
+    sb_group = str(target.get("position_group") or "—")
+    search_group = serie_a_search_group(sb_group)
+    pool = serie_a_by_group.get(search_group or "", []) if search_group else []
+
+    st.markdown(
+        f"**{html.escape(target.get('player_name', '—'))}** · "
+        f"{html.escape(str(target.get('team', '—')))} · "
+        f"{html.escape(str(target.get('position', '—')))} · "
+        f"grupo **{html.escape(sb_group)}** → pool Série A: **{html.escape(search_group or '—')}** "
+        f"({len(pool)} jogadores)",
+        unsafe_allow_html=True,
+    )
+
+    if not pool:
+        st.warning(f"Nenhum jogador elegível na Série A para o grupo «{search_group or sb_group}».")
+        return
+
+    tab_a, tab_c = st.tabs(["Opção A — percentil", "Opção C — z-score"])
+
+    def _results_df(results: list[dict]) -> pd.DataFrame:
+        rows = []
+        for rank, r in enumerate(results, start=1):
+            rows.append({
+                "#": rank,
+                "Similaridade": f"{r.get('similarity_pct', 0):.1f}%",
+                "Jogador": r.get("player_name", "—"),
+                "Time": r.get("team", "—"),
+                "Posição": r.get("position", "—"),
+                "Impact p90": fmt_stat_value("impact_passes_p90", r.get("impact_passes_p90")),
+                "PHI p90": fmt_stat_value("phi_p90", r.get("phi_p90")),
+                "ΔxT / pass": fmt_stat_value("dxt_per_pass", r.get("dxt_per_pass")),
+                "Prog. p90": fmt_stat_value("progressive_passes_p90", r.get("progressive_passes_p90")),
+            })
+        return pd.DataFrame(rows)
+
+    with tab_a:
+        st.caption(
+            "Distância euclidiana no perfil percentil (0–100) de cada métrica dentro do pool Série A."
         )
-        st.markdown("### Limiares impact / high")
-        tier_model = st.selectbox(
-            "Impact / high impact",
-            options=list(TIER_MODEL_LABELS.keys()),
-            format_func=lambda key: TIER_MODEL_LABELS[key],
-            key=TIER_MODEL_SELECT_KEY,
-            label_visibility="collapsed",
-            help=(
-                "Atual: rel_gain > 0,30 (impact) e > 0,62 (high). "
-                "Fixo 0,30/0,50: high impact com limiar mais baixo. "
-                "Percentil p65/p85: top 35% e top 15%. "
-                "Percentil p70/p90: top 30% e top 10% entre passes que avançam com ΔxT > 0."
-            ),
+        results_a = find_similar_option_a(target, pool)
+        if not results_a:
+            st.info("Nenhum similar encontrado.")
+        else:
+            st.dataframe(_results_df(results_a), use_container_width=True, hide_index=True)
+            with st.expander("Métricas usadas (Opção A)"):
+                st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
+
+    with tab_c:
+        st.caption(
+            "Distância euclidiana ponderada em z-scores do pool Série A "
+            "(maior peso em impact p90, PHI p90 e ΔxT p90)."
         )
-    return classification_model, tier_model, xt_surface_mode
+        results_c = find_similar_option_c(target, pool)
+        if not results_c:
+            st.info("Nenhum similar encontrado.")
+        else:
+            st.dataframe(_results_df(results_c), use_container_width=True, hide_index=True)
+            with st.expander("Métricas usadas (Opção C)"):
+                st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
 
 
 def render_xt_surface_section(xt_surface_mode: str) -> None:
@@ -965,28 +1042,9 @@ def render_xt_surface_section(xt_surface_mode: str) -> None:
 
 
 def main() -> None:
-    classification_model, tier_model, xt_surface_mode = render_model_selectors()
-    sig = inspect.signature(build_analytics)
-    engine_supports_dual = (
-        "tier_model" in sig.parameters and "classification_model" in sig.parameters
-    )
-    engine_supports_xt_surface = "xt_surface_mode" in sig.parameters
-    if not engine_supports_dual and (
-        classification_model != CLASSIFICATION_MODEL_DEFAULT
-        or tier_model != TIER_MODEL_DEFAULT
-    ):
-        st.warning(
-            "Modelos alternativos ainda não estão disponíveis neste deploy. "
-            "Reimplante o app no Streamlit Cloud para carregar a versão mais recente do engine."
-        )
-        classification_model = CLASSIFICATION_MODEL_DEFAULT
-        tier_model = TIER_MODEL_DEFAULT
-    if not engine_supports_xt_surface and xt_surface_mode != XT_SURFACE_MODE_ATUAL:
-        st.warning(
-            "Modos alternativos de superfície xT ainda não estão disponíveis neste deploy. "
-            "Reimplante o app no Streamlit Cloud para carregar a versão mais recente do engine."
-        )
-        xt_surface_mode = XT_SURFACE_MODE_ATUAL
+    classification_model = FIXED_CLASSIFICATION_MODEL
+    tier_model = FIXED_TIER_MODEL
+    xt_surface_mode = FIXED_XT_SURFACE_MODE
 
     with st.spinner("Carregando dados…"):
         _, all_players = load_analytics(
@@ -1003,7 +1061,9 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_dashboard, tab_comparison, tab_xt = st.tabs(["Dashboard", "Comparação", "Mapa xT"])
+    tab_dashboard, tab_comparison, tab_similarity, tab_xt = st.tabs(
+        ["Dashboard", "Comparação", "Similaridade", "Mapa xT"]
+    )
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
         st.divider()
@@ -1021,6 +1081,8 @@ def main() -> None:
                 comparison_players_by_id,
                 comparison_pool_by_group,
             )
+    with tab_similarity:
+        render_similarity_section(all_players)
     with tab_xt:
         render_xt_surface_section(xt_surface_mode)
 

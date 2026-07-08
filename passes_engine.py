@@ -26,6 +26,7 @@ from comparison_config import (
     TIER_MODEL_PERCENTILE_P65_P85,
     TIER_MODEL_PERCENTILE_P70_P90,
     TIER_MODEL_PERCENTILES,
+    XT_SURFACE_MODE_DEFAULT,
     normalize_classification_model,
     normalize_tier_model,
     normalize_xt_surface_mode,
@@ -47,8 +48,9 @@ except ImportError:
 
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
+SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 34
+DATA_CACHE_VERSION = 35
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -237,7 +239,7 @@ def get_xt_quadrant_grid(
     return hx4.quadrant_xt_grid_for_mode(cols, rows, xt_surface_mode)
 
 
-def get_xt_surface_meta(xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL) -> dict:
+def get_xt_surface_meta(xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT) -> dict:
     """Reference lines and goal position for xT map overlays."""
     return hx4.surface_meta(xt_surface_mode)
 
@@ -591,6 +593,85 @@ def _load_season_pass_frame() -> pd.DataFrame:
     return resolve_positions_in_csv_frame(frame)
 
 
+def _load_br_pass_frame() -> pd.DataFrame:
+    if not SEASON_ALL_BR_CSV_PATH.exists():
+        return pd.DataFrame()
+    frame = pd.read_csv(SEASON_ALL_BR_CSV_PATH, low_memory=False)
+    frame = frame[frame["category"].astype(str).str.lower() == "passes"]
+    return frame
+
+
+def _br_position_group(raw: str | None) -> str | None:
+    from similarity_engine import SERIE_A_POSITION_TO_GROUP
+
+    text = str(raw or "").strip().upper()
+    if text == "GK" or not text:
+        return None
+    if text in SERIE_A_POSITION_TO_GROUP:
+        return SERIE_A_POSITION_TO_GROUP[text]
+    return position_group(_normalize_position(text))
+
+
+def build_serie_a_players(
+    cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT,
+    *,
+    min_passes: int = 100,
+) -> list[dict]:
+    """Player metrics for Série A (season_all_br.csv)."""
+    _ = cache_version
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
+    frame = _load_br_pass_frame()
+    if frame.empty:
+        return []
+
+    frame = frame.copy()
+    frame["player_id"] = frame["player_id"].astype(str)
+    if "position" in frame.columns:
+        frame["position"] = frame["position"].astype(str).str.strip().str.upper()
+
+    passes = _enrich_passes(
+        frame,
+        tier_model=tier_model,
+        classification_model=classification_model,
+        xt_surface_mode=xt_surface_mode,
+    )
+    minutes_info = _minutes_from_passes_frame(frame)
+    registry = build_player_registry(frame)
+
+    players: list[dict] = []
+    for player in registry:
+        grp = _br_position_group(player.get("position"))
+        if grp is None:
+            continue
+        pid = player["code"]
+        grp_passes = passes[passes["player_id"] == pid]
+        if len(grp_passes) < min_passes:
+            continue
+        mins = minutes_info.get(pid, {})
+        metrics = compute_player_metrics(grp_passes, mins)
+        players.append({
+            "player_id": pid,
+            "player_name": player["name"],
+            "position": player.get("position", "—"),
+            "position_group": grp,
+            "team": mins.get("team", "—"),
+            "minutes": mins.get("minutes"),
+            "minutes_pct": mins.get("minutes_pct"),
+            "league": "Série A",
+            "passes_completed": metrics.get("passes_completed", 0),
+            **{
+                k: round(v, 4) if isinstance(v, float) and abs(v) < 1000 else v
+                for k, v in metrics.items()
+            },
+        })
+    return players
+
+
 def build_player_registry(frame: pd.DataFrame) -> list[dict]:
     work = frame.copy()
     work["player_id"] = work["player_id"].astype(str)
@@ -618,7 +699,7 @@ def _enrich_passes(
     frame: pd.DataFrame,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
-    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
+    xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT,
 ) -> pd.DataFrame:
     tier_model = normalize_tier_model(tier_model)
     classification_model = normalize_classification_model(classification_model)
@@ -1337,7 +1418,7 @@ def load_passes_grouped(
     cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
-    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
+    xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT,
 ) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
     _ = cache_version
@@ -1360,7 +1441,7 @@ def build_analytics(
     cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
-    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
+    xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT,
     *,
     impact_model: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
