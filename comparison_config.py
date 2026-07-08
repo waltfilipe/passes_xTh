@@ -26,11 +26,13 @@ COMPARISON_CARD_GROUPS: dict[str, tuple[str, ...]] = {
 }
 
 IMPACT_MODEL_DEFAULT = "atual"
-IMPACT_MODEL_OPT1_SHORT_FT = "opt1_short_ft"
+IMPACT_MODEL_FIXED_30_50 = "fixed_30_50"
+IMPACT_MODEL_PERCENTILE_P70_P90 = "percentile_p70_p90"
 
 IMPACT_MODEL_LABELS: dict[str, str] = {
-    IMPACT_MODEL_DEFAULT: "Atual (ganho relativo)",
-    IMPACT_MODEL_OPT1_SHORT_FT: "Opção 1 + via curta",
+    IMPACT_MODEL_DEFAULT: "Atual (0,30 / 0,62)",
+    IMPACT_MODEL_FIXED_30_50: "Fixo (0,30 / 0,50)",
+    IMPACT_MODEL_PERCENTILE_P70_P90: "Percentil (p70 / p90)",
 }
 
 

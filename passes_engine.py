@@ -20,7 +20,8 @@ from comparison_config import (
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
     IMPACT_MODEL_DEFAULT,
-    IMPACT_MODEL_OPT1_SHORT_FT,
+    IMPACT_MODEL_FIXED_30_50,
+    IMPACT_MODEL_PERCENTILE_P70_P90,
     IMPACT_MODEL_LABELS,
     normalize_impact_model,
 )
@@ -42,7 +43,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 25
+DATA_CACHE_VERSION = 26
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -75,8 +76,11 @@ IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 IMPACT_REL_GAIN_MIN_HEADROOM = 0.05
 IMPACT_REL_GAIN_TIER1 = 0.30
 IMPACT_REL_GAIN_TIER2 = 0.62
+IMPACT_REL_GAIN_TIER2_FIXED_50 = 0.50
+IMPACT_PERCENTILE_TIER1 = 70
+IMPACT_PERCENTILE_TIER2 = 90
 
-# Opção 1: limiares relativos ajustados por distância do passe.
+# Opção 1 (legado): limiares relativos ajustados por distância do passe.
 IMPACT_OPT1_SHORT_DIST_MAX = 10.0
 IMPACT_OPT1_LONG_DIST_MIN = 20.0
 IMPACT_OPT1_SHORT_TIER1_MULT = 0.85
@@ -421,6 +425,53 @@ def _impact_tier_vec_atual(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.nda
     )
 
 
+def _impact_tier_vec_fixed_30_50(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
+    """Fixo: ganho relativo com limiares 0.30 / 0.50."""
+    return _impact_tier_rel_gain_vec(
+        xt_start,
+        delta_xt,
+        IMPACT_REL_GAIN_TIER1,
+        IMPACT_REL_GAIN_TIER2_FIXED_50,
+    )
+
+
+def _impact_percentile_thresholds(
+    xt_start: np.ndarray,
+    delta_xt: np.ndarray,
+    *,
+    has_end: np.ndarray,
+    approaches_goal: np.ndarray,
+    p_tier1: int = IMPACT_PERCENTILE_TIER1,
+    p_tier2: int = IMPACT_PERCENTILE_TIER2,
+) -> tuple[float, float]:
+    """Limiares data-driven entre passes que avançam com ΔxT > 0."""
+    mask = has_end & approaches_goal
+    if not mask.any():
+        return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2
+    headroom = np.maximum(1.0 - xt_start[mask], IMPACT_REL_GAIN_MIN_HEADROOM)
+    rel_gain = delta_xt[mask] / headroom
+    rel_pos = rel_gain[rel_gain > 0]
+    if len(rel_pos) < 10:
+        return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2
+    return float(np.percentile(rel_pos, p_tier1)), float(np.percentile(rel_pos, p_tier2))
+
+
+def _impact_tier_vec_percentile_p70_p90(
+    xt_start: np.ndarray,
+    delta_xt: np.ndarray,
+    *,
+    has_end: np.ndarray,
+    approaches_goal: np.ndarray,
+) -> np.ndarray:
+    tier1, tier2 = _impact_percentile_thresholds(
+        xt_start,
+        delta_xt,
+        has_end=has_end,
+        approaches_goal=approaches_goal,
+    )
+    return _impact_tier_rel_gain_vec(xt_start, delta_xt, tier1, tier2)
+
+
 def _impact_tier_vec_opt1(xt_start: np.ndarray, delta_xt: np.ndarray, distance: np.ndarray) -> np.ndarray:
     """Opção 1: limiar relativo mais alto em longos e mais baixo em curtos."""
     tier1 = np.full(len(distance), IMPACT_REL_GAIN_TIER1, dtype=float)
@@ -460,13 +511,19 @@ def _impact_tier_for_model(
     x_end: np.ndarray,
     y_end: np.ndarray,
     distance: np.ndarray,
+    has_end: np.ndarray,
+    approaches_goal: np.ndarray,
 ) -> np.ndarray:
     model = normalize_impact_model(impact_model)
-    geom_progress = _goal_dist_vec(x_start, y_start) - _goal_dist_vec(x_end, y_end)
-    if model == IMPACT_MODEL_OPT1_SHORT_FT:
-        tier = _impact_tier_vec_opt1(xt_start, delta_xt, distance)
-        short_ft = _short_final_third_tier_vec(x_end, delta_xt, distance, geom_progress)
-        return np.maximum(tier, short_ft)
+    if model == IMPACT_MODEL_FIXED_30_50:
+        return _impact_tier_vec_fixed_30_50(xt_start, delta_xt)
+    if model == IMPACT_MODEL_PERCENTILE_P70_P90:
+        return _impact_tier_vec_percentile_p70_p90(
+            xt_start,
+            delta_xt,
+            has_end=has_end,
+            approaches_goal=approaches_goal,
+        )
     return _impact_tier_vec_atual(xt_start, delta_xt)
 
 
@@ -719,6 +776,10 @@ def _enrich_passes(
         out["xt_end_v4"] = 0.0
         out["delta_xt_v4"] = 0.0
 
+    approaches = _approaches_goal_vec(
+        out["x_start"].to_numpy(), out["y_start"].to_numpy(),
+        out["x_end"].to_numpy(), out["y_end"].to_numpy(),
+    )
     tier = _impact_tier_for_model(
         impact_model,
         xt_start=out["xt_start_v4"].to_numpy(),
@@ -728,10 +789,8 @@ def _enrich_passes(
         x_end=out["x_end"].to_numpy(),
         y_end=out["y_end"].to_numpy(),
         distance=out["pass_distance"].to_numpy(),
-    )
-    approaches = _approaches_goal_vec(
-        out["x_start"].to_numpy(), out["y_start"].to_numpy(),
-        out["x_end"].to_numpy(), out["y_end"].to_numpy(),
+        has_end=out["has_end"].to_numpy(),
+        approaches_goal=approaches,
     )
     out["impact_tier"] = tier
     out["approaches_goal"] = approaches

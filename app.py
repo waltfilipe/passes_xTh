@@ -809,8 +809,9 @@ def render_impact_model_selector() -> str:
             key=IMPACT_MODEL_SELECT_KEY,
             label_visibility="collapsed",
             help=(
-                "Atual: ganho relativo ΔxT/(1−xT) com limiares 0,30 / 0,62. "
-                "Opção 1 + via curta: ajusta limiares por distância e valoriza passes curtos no terço final."
+                "Atual: rel_gain > 0,30 (impact) e > 0,62 (high). "
+                "Fixo 0,30/0,50: high impact com limiar mais baixo. "
+                "Percentil p70/p90: top 30% e top 10% entre passes que avançam com ΔxT > 0."
             ),
         )
     return impact_model
