@@ -19,12 +19,15 @@ import streamlit.components.v1 as components
 
 import passes_engine as pe
 from comparison_config import (
+    CLASSIFICATION_MODEL_DEFAULT,
+    CLASSIFICATION_MODEL_LABELS,
     COMPARISON_CARD_GROUPS,
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
-    IMPACT_MODEL_DEFAULT,
-    IMPACT_MODEL_LABELS,
-    normalize_impact_model,
+    TIER_MODEL_DEFAULT,
+    TIER_MODEL_LABELS,
+    normalize_classification_model,
+    normalize_tier_model,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
@@ -38,7 +41,8 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
-IMPACT_MODEL_SELECT_KEY = "impact_model_select"
+CLASSIFICATION_MODEL_SELECT_KEY = "classification_model_select"
+TIER_MODEL_SELECT_KEY = "tier_model_select"
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
@@ -220,28 +224,66 @@ SELECTBOX_KEY = "map_player_select"
 COMPARISON_SELECT_KEY = "comparison_player_select"
 
 
+def _call_build_analytics(
+    cache_version: int,
+    tier_model: str,
+    classification_model: str,
+):
+    sig = inspect.signature(build_analytics)
+    params = sig.parameters
+    if "tier_model" in params and "classification_model" in params:
+        return build_analytics(
+            cache_version,
+            tier_model=tier_model,
+            classification_model=classification_model,
+        )
+    if "impact_model" in params:
+        return build_analytics(cache_version, impact_model=tier_model)
+    return build_analytics(cache_version)
+
+
+def _call_load_passes_grouped(
+    cache_version: int,
+    tier_model: str,
+    classification_model: str,
+):
+    sig = inspect.signature(load_passes_grouped)
+    params = sig.parameters
+    if "tier_model" in params and "classification_model" in params:
+        return load_passes_grouped(
+            cache_version,
+            tier_model=tier_model,
+            classification_model=classification_model,
+        )
+    if "impact_model" in params:
+        return load_passes_grouped(cache_version, impact_model=tier_model)
+    return load_passes_grouped(cache_version)
+
+
 @st.cache_data(show_spinner=False)
 def load_analytics(
     _cache_version: int = DATA_CACHE_VERSION,
-    impact_model: str = IMPACT_MODEL_DEFAULT,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
 ):
-    impact_model = normalize_impact_model(impact_model)
-    sig = inspect.signature(build_analytics)
-    if "impact_model" in sig.parameters:
-        return build_analytics(_cache_version, impact_model=impact_model)
-    return build_analytics(_cache_version)
+    return _call_build_analytics(
+        _cache_version,
+        normalize_tier_model(tier_model),
+        normalize_classification_model(classification_model),
+    )
 
 
 @st.cache_data(show_spinner=False)
 def load_passes(
     _cache_version: int = DATA_CACHE_VERSION,
-    impact_model: str = IMPACT_MODEL_DEFAULT,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
 ):
-    impact_model = normalize_impact_model(impact_model)
-    sig = inspect.signature(load_passes_grouped)
-    if "impact_model" in sig.parameters:
-        return load_passes_grouped(_cache_version, impact_model=impact_model)
-    return load_passes_grouped(_cache_version)
+    return _call_load_passes_grouped(
+        _cache_version,
+        normalize_tier_model(tier_model),
+        normalize_classification_model(classification_model),
+    )
 
 
 def _norm(s: str) -> str:
@@ -798,15 +840,27 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
-def render_impact_model_selector() -> str:
-    options = list(IMPACT_MODEL_LABELS.keys())
+def render_model_selectors() -> tuple[str, str]:
     with st.sidebar:
-        st.markdown("### Modelo de impacto")
-        impact_model = st.selectbox(
-            "Classificação",
-            options=options,
-            format_func=lambda key: IMPACT_MODEL_LABELS[key],
-            key=IMPACT_MODEL_SELECT_KEY,
+        st.markdown("### Classificação xT")
+        classification_model = st.selectbox(
+            "Ajuste por distância",
+            options=list(CLASSIFICATION_MODEL_LABELS.keys()),
+            format_func=lambda key: CLASSIFICATION_MODEL_LABELS[key],
+            key=CLASSIFICATION_MODEL_SELECT_KEY,
+            label_visibility="collapsed",
+            help=(
+                "Atual: limiares uniformes de ganho relativo. "
+                "Opção 1 + via curta: ajusta limiares por distância do passe e "
+                "promove passes curtos no terço final a impact."
+            ),
+        )
+        st.markdown("### Limiares impact / high")
+        tier_model = st.selectbox(
+            "Impact / high impact",
+            options=list(TIER_MODEL_LABELS.keys()),
+            format_func=lambda key: TIER_MODEL_LABELS[key],
+            key=TIER_MODEL_SELECT_KEY,
             label_visibility="collapsed",
             help=(
                 "Atual: rel_gain > 0,30 (impact) e > 0,62 (high). "
@@ -814,22 +868,35 @@ def render_impact_model_selector() -> str:
                 "Percentil p70/p90: top 30% e top 10% entre passes que avançam com ΔxT > 0."
             ),
         )
-    return impact_model
+    return classification_model, tier_model
 
 
 def main() -> None:
-    impact_model = render_impact_model_selector()
-    engine_supports_models = "impact_model" in inspect.signature(build_analytics).parameters
-    if impact_model != IMPACT_MODEL_DEFAULT and not engine_supports_models:
+    classification_model, tier_model = render_model_selectors()
+    sig = inspect.signature(build_analytics)
+    engine_supports_dual = (
+        "tier_model" in sig.parameters and "classification_model" in sig.parameters
+    )
+    if not engine_supports_dual and (
+        classification_model != CLASSIFICATION_MODEL_DEFAULT
+        or tier_model != TIER_MODEL_DEFAULT
+    ):
         st.warning(
-            "O modelo alternativo ainda não está disponível neste deploy. "
+            "Modelos alternativos ainda não estão disponíveis neste deploy. "
             "Reimplante o app no Streamlit Cloud para carregar a versão mais recente do engine."
         )
-        impact_model = IMPACT_MODEL_DEFAULT
+        classification_model = CLASSIFICATION_MODEL_DEFAULT
+        tier_model = TIER_MODEL_DEFAULT
 
     with st.spinner("Carregando dados…"):
-        _, all_players = load_analytics(impact_model=impact_model)
-        passes_by_player = load_passes(impact_model=impact_model)
+        _, all_players = load_analytics(
+            tier_model=tier_model,
+            classification_model=classification_model,
+        )
+        passes_by_player = load_passes(
+            tier_model=tier_model,
+            classification_model=classification_model,
+        )
 
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")

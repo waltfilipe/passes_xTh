@@ -16,14 +16,16 @@ if str(_SCRIPTS) not in sys.path:
 
 from external_models import load_markov_model
 from comparison_config import (
+    CLASSIFICATION_MODEL_DEFAULT,
+    CLASSIFICATION_MODEL_OPT1_SHORT_FT,
     COMPARISON_CARD_GROUPS,
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
-    IMPACT_MODEL_DEFAULT,
-    IMPACT_MODEL_FIXED_30_50,
-    IMPACT_MODEL_PERCENTILE_P70_P90,
-    IMPACT_MODEL_LABELS,
-    normalize_impact_model,
+    TIER_MODEL_DEFAULT,
+    TIER_MODEL_FIXED_30_50,
+    TIER_MODEL_PERCENTILE_P70_P90,
+    normalize_classification_model,
+    normalize_tier_model,
 )
 from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
 
@@ -43,7 +45,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 26
+DATA_CACHE_VERSION = 27
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -472,16 +474,51 @@ def _impact_tier_vec_percentile_p70_p90(
     return _impact_tier_rel_gain_vec(xt_start, delta_xt, tier1, tier2)
 
 
-def _impact_tier_vec_opt1(xt_start: np.ndarray, delta_xt: np.ndarray, distance: np.ndarray) -> np.ndarray:
+def _apply_opt1_distance_thresholds(
+    tier1: float | np.ndarray,
+    tier2: float | np.ndarray,
+    distance: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     """Opção 1: limiar relativo mais alto em longos e mais baixo em curtos."""
-    tier1 = np.full(len(distance), IMPACT_REL_GAIN_TIER1, dtype=float)
-    tier2 = np.full(len(distance), IMPACT_REL_GAIN_TIER2, dtype=float)
+    t1 = np.full(len(distance), float(tier1), dtype=float)
+    t2 = np.full(len(distance), float(tier2), dtype=float)
     short_mask = distance <= IMPACT_OPT1_SHORT_DIST_MAX
     long_mask = distance > IMPACT_OPT1_LONG_DIST_MIN
-    tier1[short_mask] *= IMPACT_OPT1_SHORT_TIER1_MULT
-    tier2[short_mask] *= IMPACT_OPT1_SHORT_TIER2_MULT
-    tier1[long_mask] *= IMPACT_OPT1_LONG_TIER1_MULT
-    tier2[long_mask] *= IMPACT_OPT1_LONG_TIER2_MULT
+    t1[short_mask] *= IMPACT_OPT1_SHORT_TIER1_MULT
+    t2[short_mask] *= IMPACT_OPT1_SHORT_TIER2_MULT
+    t1[long_mask] *= IMPACT_OPT1_LONG_TIER1_MULT
+    t2[long_mask] *= IMPACT_OPT1_LONG_TIER2_MULT
+    return t1, t2
+
+
+def _resolve_tier_thresholds(
+    tier_model: str,
+    xt_start: np.ndarray,
+    delta_xt: np.ndarray,
+    *,
+    has_end: np.ndarray,
+    approaches_goal: np.ndarray,
+) -> tuple[float, float]:
+    model = normalize_tier_model(tier_model)
+    if model == TIER_MODEL_FIXED_30_50:
+        return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2_FIXED_50
+    if model == TIER_MODEL_PERCENTILE_P70_P90:
+        return _impact_percentile_thresholds(
+            xt_start,
+            delta_xt,
+            has_end=has_end,
+            approaches_goal=approaches_goal,
+        )
+    return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2
+
+
+def _impact_tier_vec_opt1(xt_start: np.ndarray, delta_xt: np.ndarray, distance: np.ndarray) -> np.ndarray:
+    """Legado: Opção 1 com limiares base 0,30 / 0,62."""
+    tier1, tier2 = _apply_opt1_distance_thresholds(
+        IMPACT_REL_GAIN_TIER1,
+        IMPACT_REL_GAIN_TIER2,
+        distance,
+    )
     return _impact_tier_rel_gain_vec(xt_start, delta_xt, tier1, tier2)
 
 
@@ -502,7 +539,8 @@ def _short_final_third_tier_vec(
 
 
 def _impact_tier_for_model(
-    impact_model: str,
+    tier_model: str,
+    classification_model: str,
     *,
     xt_start: np.ndarray,
     delta_xt: np.ndarray,
@@ -514,17 +552,27 @@ def _impact_tier_for_model(
     has_end: np.ndarray,
     approaches_goal: np.ndarray,
 ) -> np.ndarray:
-    model = normalize_impact_model(impact_model)
-    if model == IMPACT_MODEL_FIXED_30_50:
-        return _impact_tier_vec_fixed_30_50(xt_start, delta_xt)
-    if model == IMPACT_MODEL_PERCENTILE_P70_P90:
-        return _impact_tier_vec_percentile_p70_p90(
-            xt_start,
-            delta_xt,
-            has_end=has_end,
-            approaches_goal=approaches_goal,
-        )
-    return _impact_tier_vec_atual(xt_start, delta_xt)
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
+
+    tier1, tier2 = _resolve_tier_thresholds(
+        tier_model,
+        xt_start,
+        delta_xt,
+        has_end=has_end,
+        approaches_goal=approaches_goal,
+    )
+    if classification_model == CLASSIFICATION_MODEL_OPT1_SHORT_FT:
+        tier1, tier2 = _apply_opt1_distance_thresholds(tier1, tier2, distance)
+
+    tier = _impact_tier_rel_gain_vec(xt_start, delta_xt, tier1, tier2)
+
+    if classification_model == CLASSIFICATION_MODEL_OPT1_SHORT_FT:
+        geom_progress = _goal_dist_vec(x_start, y_start) - _goal_dist_vec(x_end, y_end)
+        short_ft = _short_final_third_tier_vec(x_end, delta_xt, distance, geom_progress)
+        tier = np.maximum(tier, short_ft)
+
+    return tier
 
 
 def _impact_tier_vec(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
@@ -723,9 +771,11 @@ def build_player_registry(frame: pd.DataFrame) -> list[dict]:
 
 def _enrich_passes(
     frame: pd.DataFrame,
-    impact_model: str = IMPACT_MODEL_DEFAULT,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
 ) -> pd.DataFrame:
-    impact_model = normalize_impact_model(impact_model)
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
     sx, sy = _wyscout_to_sb(frame["start_x"], frame["start_y"])
     has_end = frame["end_x"].notna() & frame["end_y"].notna()
     ex = np.full(len(frame), np.nan)
@@ -781,7 +831,8 @@ def _enrich_passes(
         out["x_end"].to_numpy(), out["y_end"].to_numpy(),
     )
     tier = _impact_tier_for_model(
-        impact_model,
+        tier_model,
+        classification_model,
         xt_start=out["xt_start_v4"].to_numpy(),
         delta_xt=out["delta_xt_v4"].to_numpy(),
         x_start=out["x_start"].to_numpy(),
@@ -1430,34 +1481,50 @@ def compute_comparison_ratings(
     return players_by_id, pool_by_group
 
 
-@functools.lru_cache(maxsize=4)
+@functools.lru_cache(maxsize=16)
 def load_passes_grouped(
     cache_version: int = DATA_CACHE_VERSION,
-    impact_model: str = IMPACT_MODEL_DEFAULT,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
 ) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
     _ = cache_version
-    impact_model = normalize_impact_model(impact_model)
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
     frame = _load_season_pass_frame()
     if frame.empty:
         return {}
-    passes = _enrich_passes(frame, impact_model=impact_model)
+    passes = _enrich_passes(
+        frame,
+        tier_model=tier_model,
+        classification_model=classification_model,
+    )
     return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
 
 
 def build_analytics(
     cache_version: int = DATA_CACHE_VERSION,
-    impact_model: str = IMPACT_MODEL_DEFAULT,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    *,
+    impact_model: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Load CSV once, compute all player metrics. Returns (registry, eligible_players)."""
     _ = cache_version
-    impact_model = normalize_impact_model(impact_model)
+    if impact_model is not None and tier_model == TIER_MODEL_DEFAULT:
+        tier_model = normalize_tier_model(impact_model)
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
     frame = _load_season_pass_frame()
     if frame.empty:
         return [], []
 
     registry = build_player_registry(frame)
-    passes = _enrich_passes(frame, impact_model=impact_model)
+    passes = _enrich_passes(
+        frame,
+        tier_model=tier_model,
+        classification_model=classification_model,
+    )
     minutes_info = _load_minutes_info(frame)
 
     players: list[dict] = []
