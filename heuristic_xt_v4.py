@@ -230,6 +230,11 @@ def _heuristic_v4_post_process(grid: np.ndarray) -> np.ndarray:
     )
 
 
+def _symmetrize_pitch_width(grid: np.ndarray) -> np.ndarray:
+    """Mirror-average across pitch width (y = GOAL_Y) so both flanks match."""
+    return 0.5 * (grid + grid[::-1, :])
+
+
 def zone_xt_means(grid: np.ndarray, n_x: int, n_y: int) -> np.ndarray:
     """Mean xT per pitch zone from a threat grid."""
     ny, nx = grid.shape
@@ -252,16 +257,15 @@ def compute_heuristic_v4_fine_grid(
     xe = np.linspace(0.0, FIELD_X, nx)
     ye = np.linspace(0.0, FIELD_Y, ny)
     xc, yc = np.meshgrid(xe, ye)
-    return _build_heuristic_v4_threat_surface(xc, yc)
+    surface = _build_heuristic_v4_threat_surface(xc, yc)
+    return _symmetrize_pitch_width(surface)
 
 
 def compute_heuristic_v4_xt_grid(
     n_x: int = NX_XT_DISPLAY,
     n_y: int = NY_XT_DISPLAY,
 ) -> np.ndarray:
-    fine = compute_heuristic_v4_fine_grid()
-    zones = zone_xt_means(fine, n_x, n_y)
-    return _heuristic_v4_post_process(zones)
+    return quadrant_xt_grid(n_x, n_y)
 
 
 def interp_xt_batch(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -339,7 +343,8 @@ def quadrant_xt_grid(cols: int = NX_XT_DISPLAY, rows: int = NY_XT_DISPLAY) -> np
     rows = max(int(rows), 1)
     fine = compute_heuristic_v4_fine_grid()
     zones = zone_xt_means(fine, cols, rows)
-    return _heuristic_v4_post_process(zones)
+    processed = _heuristic_v4_post_process(zones)
+    return _symmetrize_pitch_width(processed)
 
 
 def surface_meta() -> dict[str, float]:
