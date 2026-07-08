@@ -20,6 +20,7 @@ FIELD_Y = 80.0
 ORIGIN_GRID_COLS = 12
 ORIGIN_GRID_ROWS = 8
 MIN_PASSES_ORIGIN = 50
+ORIGIN_PREFILTER_TOP_N = 50
 
 # Option A — percentile profile within league + position group.
 SIMILARITY_METRICS_A: tuple[str, ...] = (
@@ -215,6 +216,56 @@ def find_similar_option_origin(
     return results[:top_k]
 
 
+def find_similar_origin_then_percentile(
+    target: dict,
+    target_passes: pd.DataFrame | None,
+    full_pool: list[dict],
+    passes_by_id: dict[str, pd.DataFrame],
+    *,
+    origin_prefilter_n: int = ORIGIN_PREFILTER_TOP_N,
+    top_k: int = TOP_K_DEFAULT,
+    min_passes: int = MIN_PASSES_ORIGIN,
+) -> list[dict[str, Any]]:
+    """Two-step: (1) closest pass-origin profiles, then (2) percentile metric similarity."""
+    target_profile = pass_origin_profile(target_passes)
+    if target_profile is None:
+        return []
+
+    origin_scored: list[dict[str, Any]] = []
+    for cand in full_pool:
+        pid = str(cand["player_id"])
+        passes = passes_by_id.get(pid)
+        if _completed_pass_count(passes) < min_passes:
+            continue
+        profile = pass_origin_profile(passes)
+        if profile is None:
+            continue
+        origin_sim = _cosine_similarity_pct(target_profile, profile)
+        origin_scored.append({
+            **cand,
+            "origin_similarity_pct": round(origin_sim, 1),
+            "origin_dominant": describe_dominant_origin_zone(profile),
+        })
+    origin_scored.sort(
+        key=lambda r: (-float(r["origin_similarity_pct"]), str(r.get("player_name", ""))),
+    )
+    origin_candidates = origin_scored[:origin_prefilter_n]
+    if not origin_candidates:
+        return []
+
+    metric_results = find_similar_option_a(target, origin_candidates, top_k=top_k)
+    origin_by_id = {str(c["player_id"]): c for c in origin_candidates}
+    merged: list[dict[str, Any]] = []
+    for row in metric_results:
+        extra = origin_by_id.get(str(row["player_id"]), {})
+        merged.append({
+            **row,
+            "origin_similarity_pct": extra.get("origin_similarity_pct"),
+            "origin_dominant": extra.get("origin_dominant", "—"),
+        })
+    return merged
+
+
 def find_similar_option_a(
     target: dict,
     pool: list[dict],
@@ -293,6 +344,11 @@ def player_search_position(player: dict) -> str | None:
     if not pos or pos in EXCLUDED_SEARCH_POSITIONS:
         return None
     return pos
+
+
+def outfield_players(players: list[dict]) -> list[dict]:
+    """All non-goalkeeper players eligible for similarity pools."""
+    return [p for p in players if player_search_position(p) is not None]
 
 
 def group_players_by_detailed_position(players: list[dict]) -> dict[str, list[dict]]:

@@ -783,22 +783,32 @@ def _render_similarity_player_panel(
         st.caption("Sem passes para heatmap de origem.")
 
 
-def _similarity_results_df(results: list[dict], *, include_origin: bool = False):
+def _similarity_results_df(
+    results: list[dict],
+    *,
+    include_origin: bool = False,
+    origin_dual: bool = False,
+):
     import pandas as pd
 
     rows = []
     for rank, row in enumerate(results, start=1):
         entry = {
             "#": rank,
-            "Similaridade": f"{row.get('similarity_pct', 0):.1f}%",
             "Jogador": row.get("player_name", "—"),
             "Time": row.get("team", "—"),
             "Posição": row.get("position", "—"),
             "_player_id": str(row.get("player_id", "")),
         }
-        if include_origin:
+        if origin_dual:
+            entry["Sim. métricas"] = f"{row.get('similarity_pct', 0):.1f}%"
+            entry["Sim. origem"] = f"{row.get('origin_similarity_pct', 0):.1f}%"
+            entry["Origem dominante"] = row.get("origin_dominant", "—")
+        elif include_origin:
+            entry["Similaridade"] = f"{row.get('similarity_pct', 0):.1f}%"
             entry["Origem dominante"] = row.get("origin_dominant", "—")
         else:
+            entry["Similaridade"] = f"{row.get('similarity_pct', 0):.1f}%"
             entry["Impact p90"] = fmt_stat_value("impact_passes_p90", row.get("impact_passes_p90"))
             entry["PHI p90"] = fmt_stat_value("phi_p90", row.get("phi_p90"))
             entry["ΔxT / pass"] = fmt_stat_value("dxt_per_pass", row.get("dxt_per_pass"))
@@ -818,7 +828,8 @@ def _render_similarity_results_tab(
     target_league: str,
     similar_league: str,
     pick_key: str,
-    include_origin: bool,
+    include_origin: bool = False,
+    origin_dual: bool = False,
 ) -> None:
     import pandas as pd
 
@@ -826,7 +837,7 @@ def _render_similarity_results_tab(
         st.info("Nenhum similar encontrado.")
         return
 
-    df = _similarity_results_df(results, include_origin=include_origin)
+    df = _similarity_results_df(results, include_origin=include_origin, origin_dual=origin_dual)
     display_df = df.drop(columns=["_player_id"])
     pick = st.dataframe(
         display_df,
@@ -870,6 +881,10 @@ def _render_similarity_results_tab(
             league=similar_league,
             similarity_pct=float(similar.get("similarity_pct") or 0),
         )
+        if similar.get("origin_similarity_pct") is not None:
+            st.caption(
+                f"Similaridade de origem: {float(similar['origin_similarity_pct']):.1f}%"
+            )
 
     compare_metrics = [
         ("Impact p90", "impact_passes_p90"),
@@ -956,15 +971,19 @@ def render_similarity_section(
         target = dict(players_sb_by_id[target_id])
         target_passes = passes_by_player_sb.get(target_id)
         pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
+        full_dest_pool = sim.outfield_players(serie_a_players)
         pool_passes = serie_a_passes
         pool_label = f"Série A · {search_pos or '—'}"
+        origin_pool_label = f"Série A · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
         target_league = "Série B"
     else:
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
         pool = sim.similarity_search_pool(sb_by_pos, search_pos)
+        full_dest_pool = sim.outfield_players(all_players)
         pool_passes = passes_by_player_sb
         pool_label = f"Série B · {search_pos or '—'}"
+        origin_pool_label = f"Série B · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
         target_league = "Série A"
 
     if not search_pos:
@@ -1034,17 +1053,21 @@ def render_similarity_section(
 
     with tab_origin:
         st.caption(
-            "Similaridade da região de origem dos passes completos (grid 12×8, cosseno)."
+            f"Dupla similaridade: (1) top {sim.ORIGIN_PREFILTER_TOP_N} jogadores de "
+            f"{similar_league_label} com origem de passes mais parecida (qualquer posição); "
+            f"(2) entre eles, ranking por perfil percentil das métricas (Opção A)."
         )
         if sim.pass_origin_profile(target_passes) is None:
             st.warning("Sem passes completos suficientes para perfil de origem do jogador selecionado.")
             return
-        if not pool_passes:
+        if not pool_passes or not full_dest_pool:
             st.warning("Passes do pool indisponíveis para comparação espacial.")
             return
-        results_origin = sim.find_similar_option_origin(
+        st.caption(f"Pool etapa 1: **{origin_pool_label}** ({len(full_dest_pool)} elegíveis)")
+        results_origin = sim.find_similar_origin_then_percentile(
+            target,
             target_passes,
-            pool,
+            full_dest_pool,
             pool_passes,
             top_k=top_k,
         )
@@ -1056,13 +1079,13 @@ def render_similarity_section(
             target_league=target_league_label,
             similar_league=similar_league_label,
             pick_key=f"sim_{prefix}_pick_origin",
-            include_origin=True,
+            origin_dual=True,
         )
-        with st.expander("Como interpretar origem dominante"):
+        with st.expander("Como interpretar"):
             st.markdown(
-                "- **defesa (área)**: passes saindo da área própria\n"
-                "- **saída de bola**: entre área e meio defensivo\n"
-                "- **meio-campo** / **terço final**: origem mais avançada"
+                "- **Sim. origem**: cosseno entre mapas 12×8 de onde os passes completos começam\n"
+                "- **Sim. métricas**: percentil das métricas (Opção A) só entre os candidatos de origem parecida\n"
+                "- **Origem dominante**: zona com maior % de passes daquele jogador"
             )
 
 
