@@ -800,8 +800,8 @@ def render_similarity_section(
 
     st.subheader("Similaridade entre ligas")
     st.caption(
-        f"Top {SIMILARITY_TOP_K} jogadores mais parecidos por perfil de passe ou origem espacial. "
-        "Config fixa: Opção 2 (mapa = passes) · Opção 1 + via curta · percentis p65/p85."
+        f"Top {SIMILARITY_TOP_K} jogadores mais parecidos na mesma posição detalhada "
+        f"(LB, RB, CM, LW…). Fonte Série A: season_all_brfull.csv com position_raw."
     )
 
     if not all_players:
@@ -811,7 +811,7 @@ def render_similarity_section(
     serie_a_players = load_serie_a_players()
     if not serie_a_players:
         st.warning(
-            "Dados da Série A indisponíveis — confirme season_all_br.csv e reimplante o app."
+            "Dados da Série A indisponíveis — confirme season_all_brfull.csv e reimplante o app."
         )
         return
 
@@ -823,8 +823,8 @@ def render_similarity_section(
     )
     sb_to_sa = direction == "Série B → Série A"
 
-    serie_a_by_group = sim.group_serie_a_pool(serie_a_players)
-    sb_by_group = sim.group_players_by_position(all_players)
+    serie_a_by_pos = sim.group_players_by_detailed_position(serie_a_players)
+    sb_by_pos = sim.group_players_by_detailed_position(all_players)
     players_sb_by_id = {str(p["player_id"]): p for p in all_players}
     players_sa_by_id = {str(p["player_id"]): p for p in serie_a_players}
 
@@ -854,27 +854,32 @@ def render_similarity_section(
         return
 
     target_id = id_by_label[selected_label]
+    search_pos = sim.player_search_position(
+        players_sb_by_id[target_id] if sb_to_sa else players_sa_by_id[target_id]
+    )
     if sb_to_sa:
         target = dict(players_sb_by_id[target_id])
         target_passes = passes_by_player_sb.get(target_id)
-        sb_group = str(target.get("position_group") or "—")
-        search_group = sim.serie_a_search_group(sb_group)
-        pool = serie_a_by_group.get(search_group or "", []) if search_group else []
+        pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
         pool_passes = serie_a_passes
-        pool_label = f"Série A · {search_group or '—'}"
+        pool_label = f"Série A · {search_pos or '—'}"
         target_league = "Série B"
     else:
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
-        sa_group = str(target.get("position_group") or "—")
-        search_groups = sim.serie_b_search_groups(sa_group)
-        pool = sim.pool_from_groups(sb_by_group, search_groups)
+        pool = sim.similarity_search_pool(sb_by_pos, search_pos)
         pool_passes = passes_by_player_sb
-        pool_label = "Série B · " + ", ".join(search_groups) if search_groups else "—"
+        pool_label = f"Série B · {search_pos or '—'}"
         target_league = "Série A"
 
+    if not search_pos:
+        st.warning("Posição inválida para comparação (goleiros são excluídos).")
+        return
+
     if not pool:
-        st.warning("Nenhum jogador elegível no pool de comparação.")
+        st.warning(
+            f"Nenhum jogador elegível na posição **{html.escape(search_pos)}** em {pool_label.split(' · ')[0]}."
+        )
         return
 
     _render_similarity_target_card(

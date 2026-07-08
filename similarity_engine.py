@@ -58,24 +58,9 @@ SERIE_A_POSITION_TO_GROUP: dict[str, str] = {
     "ST": "Atacantes",
 }
 
-# Série A CSV só tem CB/CM/ST — laterais e extremos da Série B usam pool de meias.
-SERIE_A_SEARCH_GROUP: dict[str, str] = {
-    "Zagueiros": "Zagueiros",
-    "Laterais": "Meio-campistas",
-    "Meio-campistas": "Meio-campistas",
-    "Extremos": "Meio-campistas",
-    "Atacantes": "Atacantes",
-}
-
 TOP_K_DEFAULT = 10
 MIN_PASSES_SERIE_A = 100
-
-# Inverso de SERIE_A_SEARCH_GROUP: pool na Série B ao buscar a partir da Série A.
-SERIE_B_SEARCH_GROUPS: dict[str, tuple[str, ...]] = {
-    "Zagueiros": ("Zagueiros",),
-    "Meio-campistas": ("Meio-campistas", "Laterais", "Extremos"),
-    "Atacantes": ("Atacantes",),
-}
+EXCLUDED_SEARCH_POSITIONS = frozenset({"GK", "—"})
 
 
 def _metric_vector(player: dict, keys: tuple[str, ...]) -> np.ndarray:
@@ -302,16 +287,31 @@ def find_similar_option_c(
     return results[:top_k]
 
 
-def serie_a_search_group(sb_group: str | None) -> str | None:
-    if not sb_group:
+def player_search_position(player: dict) -> str | None:
+    """Normalized detailed position used for cross-league similarity pools."""
+    pos = str(player.get("position") or "").strip().upper()
+    if not pos or pos in EXCLUDED_SEARCH_POSITIONS:
         return None
-    return SERIE_A_SEARCH_GROUP.get(sb_group)
+    return pos
 
 
-def serie_b_search_groups(sa_group: str | None) -> tuple[str, ...]:
-    if not sa_group:
-        return ()
-    return SERIE_B_SEARCH_GROUPS.get(str(sa_group), (str(sa_group),))
+def group_players_by_detailed_position(players: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for player in players:
+        pos = player_search_position(player)
+        if pos is None:
+            continue
+        out.setdefault(pos, []).append(player)
+    return out
+
+
+def similarity_search_pool(
+    players_by_position: dict[str, list[dict]],
+    position: str | None,
+) -> list[dict]:
+    if not position:
+        return []
+    return list(players_by_position.get(str(position).strip().upper(), []))
 
 
 def group_players_by_position(players: list[dict]) -> dict[str, list[dict]]:

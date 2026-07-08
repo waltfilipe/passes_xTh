@@ -49,8 +49,9 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
+SEASON_ALL_BR_FULL_CSV_PATH = Path(__file__).resolve().parent / "season_all_brfull.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 36
+DATA_CACHE_VERSION = 37
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -594,21 +595,20 @@ def _load_season_pass_frame() -> pd.DataFrame:
 
 
 def _load_br_pass_frame() -> pd.DataFrame:
-    if not SEASON_ALL_BR_CSV_PATH.exists():
+    path = SEASON_ALL_BR_FULL_CSV_PATH if SEASON_ALL_BR_FULL_CSV_PATH.exists() else SEASON_ALL_BR_CSV_PATH
+    if not path.exists():
         return pd.DataFrame()
-    frame = pd.read_csv(SEASON_ALL_BR_CSV_PATH, low_memory=False)
+    frame = pd.read_csv(path, low_memory=False)
     frame = frame[frame["category"].astype(str).str.lower() == "passes"]
+    if path == SEASON_ALL_BR_FULL_CSV_PATH:
+        return resolve_positions_in_csv_frame(frame)
     return frame
 
 
 def _br_position_group(raw: str | None) -> str | None:
-    from similarity_engine import SERIE_A_POSITION_TO_GROUP
-
     text = str(raw or "").strip().upper()
     if text == "GK" or not text:
         return None
-    if text in SERIE_A_POSITION_TO_GROUP:
-        return SERIE_A_POSITION_TO_GROUP[text]
     return position_group(_normalize_position(text))
 
 
@@ -620,7 +620,7 @@ def build_serie_a_players(
     *,
     min_passes: int = 100,
 ) -> list[dict]:
-    """Player metrics for Série A (season_all_br.csv)."""
+    """Player metrics for Série A (season_all_brfull.csv with posições detalhadas)."""
     _ = cache_version
     tier_model = normalize_tier_model(tier_model)
     classification_model = normalize_classification_model(classification_model)
