@@ -67,8 +67,15 @@ SERIE_A_SEARCH_GROUP: dict[str, str] = {
     "Atacantes": "Atacantes",
 }
 
-TOP_K_DEFAULT = 5
+TOP_K_DEFAULT = 10
 MIN_PASSES_SERIE_A = 100
+
+# Inverso de SERIE_A_SEARCH_GROUP: pool na Série B ao buscar a partir da Série A.
+SERIE_B_SEARCH_GROUPS: dict[str, tuple[str, ...]] = {
+    "Zagueiros": ("Zagueiros",),
+    "Meio-campistas": ("Meio-campistas", "Laterais", "Extremos"),
+    "Atacantes": ("Atacantes",),
+}
 
 
 def _metric_vector(player: dict, keys: tuple[str, ...]) -> np.ndarray:
@@ -301,10 +308,27 @@ def serie_a_search_group(sb_group: str | None) -> str | None:
     return SERIE_A_SEARCH_GROUP.get(sb_group)
 
 
-def group_serie_a_pool(players: list[dict]) -> dict[str, list[dict]]:
+def serie_b_search_groups(sa_group: str | None) -> tuple[str, ...]:
+    if not sa_group:
+        return ()
+    return SERIE_B_SEARCH_GROUPS.get(str(sa_group), (str(sa_group),))
+
+
+def group_players_by_position(players: list[dict]) -> dict[str, list[dict]]:
     out: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
     for p in players:
         grp = p.get("position_group")
         if grp in out:
             out[str(grp)].append(p)
     return out
+
+
+def pool_from_groups(players_by_group: dict[str, list[dict]], groups: tuple[str, ...]) -> list[dict]:
+    pool: list[dict] = []
+    for group in groups:
+        pool.extend(players_by_group.get(group, []))
+    return pool
+
+
+def group_serie_a_pool(players: list[dict]) -> dict[str, list[dict]]:
+    return group_players_by_position(players)

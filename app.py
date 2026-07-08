@@ -43,7 +43,11 @@ from comparison_config import (
     normalize_tier_model,
     normalize_xt_surface_mode,
 )
-from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
+from passes_maps import (
+    draw_impact_pass_map,
+    draw_pass_destination_heatmap,
+    draw_pass_origin_heatmap,
+)
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
@@ -55,7 +59,10 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
-SIMILARITY_SELECT_KEY = "similarity_player_select"
+SIMILARITY_TOP_K = 10
+SIMILARITY_DIRECTION_KEY = "similarity_direction"
+SIMILARITY_SELECT_SB_KEY = "similarity_player_select_sb"
+SIMILARITY_SELECT_SA_KEY = "similarity_player_select_sa"
 FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
 FIXED_TIER_MODEL = TIER_MODEL_DEFAULT
 FIXED_XT_SURFACE_MODE = XT_SURFACE_MODE_DEFAULT
@@ -740,6 +747,50 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
+def _render_similarity_target_card(
+    player: dict,
+    passes,
+    *,
+    league: str,
+    pool_label: str,
+    pool_size: int,
+) -> None:
+    name = html.escape(str(player.get("player_name", "—")))
+    team = html.escape(str(player.get("team", "—")))
+    position = html.escape(str(player.get("position", "—")))
+    group = html.escape(str(player.get("position_group", "—")))
+    minutes_txt = fmt_stat_value("minutes", player.get("minutes"))
+    passes_txt = fmt_stat_value("passes_completed", player.get("passes_completed"))
+
+    col_info, col_map = st.columns([1.0, 1.15], gap="medium")
+    with col_info:
+        st.markdown(
+            f"### {name}\n"
+            f"{team} · {position} · {group} · **{html.escape(league)}**",
+            unsafe_allow_html=True,
+        )
+        m1, m2 = st.columns(2)
+        m1.metric("Minutos", minutes_txt)
+        m2.metric("Passes", passes_txt)
+        profile = sim.pass_origin_profile(passes) if passes is not None else None
+        if profile is not None:
+            origin_txt = sim.describe_dominant_origin_zone(profile)
+            st.caption(f"Origem dominante: {origin_txt}")
+        st.caption(f"Pool de busca: **{html.escape(pool_label)}** ({pool_size} jogadores)")
+
+    with col_map:
+        if passes is not None and not passes.empty:
+            fig = draw_pass_origin_heatmap(
+                passes,
+                str(player.get("player_name", "—")),
+                str(player.get("team", "—")),
+                mini=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.info("Sem passes para mapa de origem.")
+
+
 def render_similarity_section(
     all_players: list[dict],
     passes_by_player_sb: dict,
@@ -747,11 +798,9 @@ def render_similarity_section(
 ) -> None:
     import pandas as pd
 
-    st.subheader("Similaridade Série B → Série A")
+    st.subheader("Similaridade entre ligas")
     st.caption(
-        "Top 5 jogadores da Série A com perfil de passe mais próximo ao selecionado na Série B. "
-        "Pool Série A: CB → Zagueiros, CM → Meio-campistas, ST → Atacantes (mín. 100 passes). "
-        "Laterais e extremos da Série B comparam com meio-campistas da Série A. "
+        f"Top {SIMILARITY_TOP_K} jogadores mais parecidos por perfil de passe ou origem espacial. "
         "Config fixa: Opção 2 (mapa = passes) · Opção 1 + via curta · percentis p65/p85."
     )
 
@@ -766,9 +815,28 @@ def render_similarity_section(
         )
         return
 
+    direction = st.radio(
+        "Direção da busca",
+        options=("Série B → Série A", "Série A → Série B"),
+        horizontal=True,
+        key=SIMILARITY_DIRECTION_KEY,
+    )
+    sb_to_sa = direction == "Série B → Série A"
+
     serie_a_by_group = sim.group_serie_a_pool(serie_a_players)
-    players_by_id = {str(p["player_id"]): p for p in all_players}
-    options = _player_options(all_players)
+    sb_by_group = sim.group_players_by_position(all_players)
+    players_sb_by_id = {str(p["player_id"]): p for p in all_players}
+    players_sa_by_id = {str(p["player_id"]): p for p in serie_a_players}
+
+    if sb_to_sa:
+        options = _player_options(all_players)
+        select_label = "Jogador Série B"
+        select_key = SIMILARITY_SELECT_SB_KEY
+    else:
+        options = _player_options(serie_a_players)
+        select_label = "Jogador Série A"
+        select_key = SIMILARITY_SELECT_SA_KEY
+
     if not options:
         st.info("Nenhum jogador disponível para similaridade.")
         return
@@ -776,32 +844,47 @@ def render_similarity_section(
     labels = [o[3] for o in options]
     id_by_label = {o[3]: o[0] for o in options}
     selected_label = st.selectbox(
-        "Jogador Série B",
+        select_label,
         options=labels,
-        key=SIMILARITY_SELECT_KEY,
+        key=select_key,
         placeholder="Selecione um jogador",
     )
     if not selected_label:
-        st.info("Selecione um jogador para ver similares na Série A.")
+        st.info("Selecione um jogador para ver os similares.")
         return
 
-    target = dict(players_by_id[id_by_label[selected_label]])
-    sb_group = str(target.get("position_group") or "—")
-    search_group = sim.serie_a_search_group(sb_group)
-    pool = serie_a_by_group.get(search_group or "", []) if search_group else []
-
-    st.markdown(
-        f"**{html.escape(target.get('player_name', '—'))}** · "
-        f"{html.escape(str(target.get('team', '—')))} · "
-        f"{html.escape(str(target.get('position', '—')))} · "
-        f"grupo **{html.escape(sb_group)}** → pool Série A: **{html.escape(search_group or '—')}** "
-        f"({len(pool)} jogadores)",
-        unsafe_allow_html=True,
-    )
+    target_id = id_by_label[selected_label]
+    if sb_to_sa:
+        target = dict(players_sb_by_id[target_id])
+        target_passes = passes_by_player_sb.get(target_id)
+        sb_group = str(target.get("position_group") or "—")
+        search_group = sim.serie_a_search_group(sb_group)
+        pool = serie_a_by_group.get(search_group or "", []) if search_group else []
+        pool_passes = serie_a_passes
+        pool_label = f"Série A · {search_group or '—'}"
+        target_league = "Série B"
+    else:
+        target = dict(players_sa_by_id[target_id])
+        target_passes = serie_a_passes.get(target_id)
+        sa_group = str(target.get("position_group") or "—")
+        search_groups = sim.serie_b_search_groups(sa_group)
+        pool = sim.pool_from_groups(sb_by_group, search_groups)
+        pool_passes = passes_by_player_sb
+        pool_label = "Série B · " + ", ".join(search_groups) if search_groups else "—"
+        target_league = "Série A"
 
     if not pool:
-        st.warning(f"Nenhum jogador elegível na Série A para o grupo «{search_group or sb_group}».")
+        st.warning("Nenhum jogador elegível no pool de comparação.")
         return
+
+    _render_similarity_target_card(
+        target,
+        target_passes,
+        league=target_league,
+        pool_label=pool_label,
+        pool_size=len(pool),
+    )
+    st.divider()
 
     tab_a, tab_c, tab_origin = st.tabs(
         ["Opção A — percentil", "Opção C — z-score", "Origem dos passes"]
@@ -829,11 +912,14 @@ def render_similarity_section(
             rows.append(row)
         return pd.DataFrame(rows)
 
+    top_k = SIMILARITY_TOP_K
+    dest_league = "Série A" if sb_to_sa else "Série B"
+
     with tab_a:
         st.caption(
-            "Distância euclidiana no perfil percentil (0–100) de cada métrica dentro do pool Série A."
+            f"Distância euclidiana no perfil percentil (0–100) dentro do pool {dest_league}."
         )
-        results_a = sim.find_similar_option_a(target, pool)
+        results_a = sim.find_similar_option_a(target, pool, top_k=top_k)
         if not results_a:
             st.info("Nenhum similar encontrado.")
         else:
@@ -843,10 +929,10 @@ def render_similarity_section(
 
     with tab_c:
         st.caption(
-            "Distância euclidiana ponderada em z-scores do pool Série A "
+            f"Distância euclidiana ponderada em z-scores do pool {dest_league} "
             "(maior peso em impact p90, PHI p90 e ΔxT p90)."
         )
-        results_c = sim.find_similar_option_c(target, pool)
+        results_c = sim.find_similar_option_c(target, pool, top_k=top_k)
         if not results_c:
             st.info("Nenhum similar encontrado.")
         else:
@@ -856,11 +942,9 @@ def render_similarity_section(
 
     with tab_origin:
         st.caption(
-            "Similaridade da região de origem dos passes completos: grid 12×8 no campo "
-            "(StatsBomb 120×80 m), proporção por zona e distância por cosseno entre perfis."
+            "Similaridade da região de origem dos passes completos: grid 12×8, "
+            "proporção por zona e distância por cosseno entre perfis."
         )
-        target_id = str(target["player_id"])
-        target_passes = passes_by_player_sb.get(target_id)
         target_profile = sim.pass_origin_profile(target_passes)
         if target_profile is None:
             st.warning(
@@ -868,20 +952,15 @@ def render_similarity_section(
             )
             return
 
-        target_origin = sim.describe_dominant_origin_zone(target_profile)
-        st.markdown(
-            f"Origem dominante (Série B): **{html.escape(target_origin)}**",
-            unsafe_allow_html=True,
-        )
-
-        if not serie_a_passes:
-            st.warning("Passes da Série A indisponíveis para comparação espacial.")
+        if not pool_passes:
+            st.warning("Passes do pool indisponíveis para comparação espacial.")
             return
 
         results_origin = sim.find_similar_option_origin(
             target_passes,
             pool,
-            serie_a_passes,
+            pool_passes,
+            top_k=top_k,
         )
         if not results_origin:
             st.info("Nenhum similar por origem de passe encontrado no pool.")

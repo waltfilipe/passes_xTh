@@ -240,6 +240,81 @@ def draw_pass_destination_heatmap(
     return fig
 
 
+def draw_pass_origin_heatmap(
+    passes,
+    player_name: str,
+    match_label: str = "todos os jogos",
+    *,
+    mini: bool = False,
+):
+    """12×8 heatmap of completed pass start locations (origin)."""
+    if mini:
+        figsize = (3.8, 2.5)
+        dpi = 150
+    else:
+        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
+        dpi = FIG_DPI_COMPACT
+
+    fig_w = figsize[0]
+    scale = _map_scale(fig_w)
+    completed = passes[passes["is_won"].astype(bool)].copy() if passes is not None else passes
+    fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
+
+    x_bins = np.linspace(0.0, FIELD_X, PASS_DEST_HEATMAP_COLS + 1)
+    y_bins = np.linspace(0.0, FIELD_Y, PASS_DEST_HEATMAP_ROWS + 1)
+    grid = np.zeros((PASS_DEST_HEATMAP_ROWS, PASS_DEST_HEATMAP_COLS), dtype=float)
+
+    if completed is not None and not completed.empty:
+        x_idx = np.clip(
+            np.digitize(completed["x_start"].to_numpy(), x_bins, right=True) - 1,
+            0,
+            PASS_DEST_HEATMAP_COLS - 1,
+        )
+        y_idx = np.clip(
+            np.digitize(completed["y_start"].to_numpy(), y_bins, right=True) - 1,
+            0,
+            PASS_DEST_HEATMAP_ROWS - 1,
+        )
+        for ix, iy in zip(x_idx, y_idx):
+            grid[iy, ix] += 1.0
+
+    vmax = max(float(grid.max()), 1.0)
+    norm = Normalize(vmin=0.0, vmax=vmax)
+
+    for iy in range(PASS_DEST_HEATMAP_ROWS):
+        for ix in range(PASS_DEST_HEATMAP_COLS):
+            value = float(grid[iy, ix])
+            x0, x1 = x_bins[ix], x_bins[ix + 1]
+            y0, y1 = y_bins[iy], y_bins[iy + 1]
+            ax.add_patch(
+                Rectangle(
+                    (x0, y0), x1 - x0, y1 - y0,
+                    facecolor=CMAP_PASS_DEST(norm(value)),
+                    edgecolor=(1, 1, 1, 0.12),
+                    linewidth=0.25,
+                    alpha=0.94,
+                    zorder=2,
+                )
+            )
+
+    pitch.draw(ax=ax)
+    if not mini:
+        sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
+        cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
+        cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
+        cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
+        plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
+        cbar.set_label("Passes completos", color="#c7cdda", fontsize=7 * scale)
+    title_size = 7.0 * scale if mini else 8.2 * scale
+    ax.set_title(
+        f"{player_name}\nOrigem · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
+        color="white", fontsize=title_size, pad=4 if mini else 5,
+    )
+    if not mini:
+        _attack_arrow(fig, fig_w=fig_w)
+    return fig
+
+
 def draw_xt_surface_heatmap(
     *,
     cols: int = XT_HEATMAP_COLS_DEFAULT,
