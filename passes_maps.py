@@ -236,7 +236,7 @@ def draw_xt_surface_heatmap(
     rows: int = XT_HEATMAP_ROWS_DEFAULT,
     compact: bool = False,
 ):
-    """Heatmap of the xT v4 surface with quadrant mean values annotated."""
+    """Heatmap of the Heurístico v4 xT surface with quadrant mean values annotated."""
     import passes_engine as pe
 
     cols = max(int(cols), 1)
@@ -252,6 +252,7 @@ def draw_xt_surface_heatmap(
     scale = _map_scale(fig_w)
     meta = pe.get_xt_surface_meta()
     grid = pe.get_xt_quadrant_grid(cols, rows)
+    model_label = meta.get("model_label", "Heurístico v4 — Top 5 (último terço)")
 
     fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
     x_bins = np.linspace(0.0, FIELD_X, cols + 1)
@@ -318,7 +319,7 @@ def draw_xt_surface_heatmap(
     cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2f}"))
     cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
     plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-    cbar.set_label("xT v4", color="#c7cdda", fontsize=7 * scale)
+    cbar.set_label(model_label, color="#c7cdda", fontsize=7 * scale)
 
     legend_handles = [
         Line2D([0], [0], color="#94a3b8", lw=1.0, linestyle="--", label="2/3 ofensivo (x=40)"),
@@ -330,7 +331,7 @@ def draw_xt_surface_heatmap(
     _add_map_legend(ax, legend_handles, fig_w=fig_w)
 
     ax.set_title(
-        f"Superfície xT v4 · {cols}×{rows} quadrantes\n"
+        f"{model_label} · {cols}×{rows} quadrantes\n"
         f"valores = média xT por célula · ataque →",
         color="white",
         fontsize=8.4 * scale,

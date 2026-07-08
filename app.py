@@ -887,7 +887,7 @@ def render_model_selectors() -> tuple[str, str]:
 
 
 def render_xt_surface_section() -> None:
-    st.subheader("Mapa de calor — superfície xT v4")
+    st.subheader("Mapa de calor — Heurístico v4 (Top 5, último terço)")
     if draw_xt_surface_heatmap is None or get_xt_quadrant_grid is None:
         st.warning(
             "O mapa xT precisa da versão mais recente de passes_engine.py e passes_maps.py. "
@@ -895,7 +895,8 @@ def render_xt_surface_section() -> None:
         )
         return
     st.caption(
-        "Valores por quadrante = média da superfície xT usada no engine (heurística v3.1 + bônus Markov). "
+        "Valores por quadrante = média da superfície xT usada no engine "
+        "(Heurístico v4 — Top 5, com bônus Markov concentrado no último terço). "
         "Útil para entender por que passes geometricamente próximos ao gol podem ter ΔxT diferente."
     )
 

@@ -14,7 +14,7 @@ _SCRIPTS = Path(__file__).resolve().parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from external_models import load_markov_model
+import heuristic_xt_v4 as hx4
 from comparison_config import (
     CLASSIFICATION_MODEL_DEFAULT,
     CLASSIFICATION_MODEL_OPT1_SHORT_FT,
@@ -47,7 +47,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 29
+DATA_CACHE_VERSION = 31
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -103,31 +103,8 @@ IMPACT_PROG_STRICTNESS = 1.05
 XT_V3_HIGH_FLOOR_CLASS = 0.26
 XT_V3_HIGH_SCALE_CLASS = 0.45
 
-# ── xT v4 surface ───────────────────────────────────────────────────────────
-XT_V3_FINE_NX, XT_V3_FINE_NY = 96, 64
-XT_V3_DEF_MAX, XT_V3_MID_MAX, XT_V3_ATT_BYLINE = 0.25, 0.60, 0.94
-XT_V3_SURFACE_MAX = 1.02
-OPT_ATTACKING_TWO_THIRDS_X = 40.0
-XT_V31_ZONE_BLEND_WIDTH = 48.0
-XT_V31_LAT_DISC_MAX = 0.06
-XT_V31_LAT_GATE_X = HALF_LINE_X
-XT_V31_GAUSS_SIGMA_X, XT_V31_GAUSS_SIGMA_Y = 3.5, 0.0
-XT_V31_COL_SMOOTH_KERNEL = (0.22, 0.56, 0.22)
-XT_V31_MAX_COL_STEP_DEF, XT_V31_MAX_COL_STEP_ATT = 0.050, 0.078
-XT_V31_ATT_COL_START = 10
-XT_V3_LAT_CURVE_POWER = 1.0
-XT_V4_MARKOV_BONUS_MAX, XT_V4_MARKOV_BONUS_POWER = 0.052, 1.0
-XT_V4_MARKOV_DEF_MID_FLOOR, XT_V4_MARKOV_GATE_BLEND = 0.06, 14.0
-XT_V4_SURFACE_MAX = 1.02
-XT_V4_SHORT_PASS_DIST, XT_V4_SHORT_PASS_FACTOR = 8.0, 0.55
-XT_V3_NEG_PENALTY_FACTOR = 0.55
-XT_V3_PRESSURE_ESCAPE_BONUS = 0.02
-XT_V3_PRESSURE_X_MAX = 50.0
-XT_V3_WIDE_FRAC = 0.60
-XT_V3_NEG_RECYCLE_X_MAX = 60.0
-XT_V5_MAX_DELTA_DEF, XT_V5_MAX_DELTA_MID = 0.28, 0.36
-XT_V5_MAX_DELTA_ATT, XT_V5_MAX_DELTA_BOX = 0.42, 0.52
-XT_V4_BOX_X_START = 90.0
+# ── xT v4 (Heurístico v4 — Top 5 último terço) ───────────────────────────────
+# Surface + pass delta logic lives in heuristic_xt_v4.py (wc-playeranalysis).
 
 RANKING_METRIC_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("All-around pass efficiency and impact", (
@@ -223,186 +200,9 @@ TOOLTIP_LABELS: dict[str, str] = {
 }
 
 
-# ── Math helpers ──────────────────────────────────────────────────────────────
-def _smoothstep(t: np.ndarray) -> np.ndarray:
-    t = np.clip(t, 0.0, 1.0)
-    return t * t * (3.0 - 2.0 * t)
-
-
-def _smootherstep(t: np.ndarray) -> np.ndarray:
-    t = np.clip(t, 0.0, 1.0)
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
-
-
-def _lateral_relative_position(y: np.ndarray) -> np.ndarray:
-    return np.abs(y - GOAL_Y) / (FIELD_Y / 2.0)
-
-
-def _gaussian_kernel_1d(sigma: float) -> np.ndarray:
-    radius = max(1, int(np.ceil(3.0 * sigma)))
-    xs = np.arange(-radius, radius + 1, dtype=float)
-    kernel = np.exp(-0.5 * (xs / sigma) ** 2)
-    return kernel / kernel.sum()
-
-
-def _gaussian_smooth_2d(grid: np.ndarray, sigma_x: float, sigma_y: float) -> np.ndarray:
-    out = grid
-    if sigma_x > 0:
-        kx = _gaussian_kernel_1d(sigma_x)
-        out = np.apply_along_axis(lambda row: np.convolve(row, kx, mode="same"), axis=1, arr=out)
-    if sigma_y > 0:
-        ky = _gaussian_kernel_1d(sigma_y)
-        out = np.apply_along_axis(lambda row: np.convolve(row, ky, mode="same"), axis=0, arr=out)
-    return out
-
-
-def _map_zonal_threat_v31(x: np.ndarray) -> np.ndarray:
-    blend = XT_V31_ZONE_BLEND_WIDTH
-    x = np.clip(x, 0.0, FIELD_X)
-    threat_def = XT_V3_DEF_MAX * _smootherstep(np.clip(x / OPT_ATTACKING_TWO_THIRDS_X, 0.0, 1.0))
-    mid_span = max(FINAL_THIRD_LINE_X - OPT_ATTACKING_TWO_THIRDS_X, 1.0)
-    mid_t = np.clip((x - OPT_ATTACKING_TWO_THIRDS_X) / mid_span, 0.0, 1.0)
-    threat_mid = XT_V3_DEF_MAX + (XT_V3_MID_MAX - XT_V3_DEF_MAX) * _smootherstep(mid_t)
-    att_span = max(FIELD_X - FINAL_THIRD_LINE_X, 1.0)
-    att_t = np.clip((x - FINAL_THIRD_LINE_X) / att_span, 0.0, 1.0)
-    threat_att = XT_V3_MID_MAX + (XT_V3_ATT_BYLINE - XT_V3_MID_MAX) * _smootherstep(att_t)
-    w_def = 1.0 - _smootherstep(np.clip((x - (OPT_ATTACKING_TWO_THIRDS_X - blend)) / blend, 0.0, 1.0))
-    w_att = _smootherstep(np.clip((x - (FINAL_THIRD_LINE_X - blend)) / blend, 0.0, 1.0))
-    w_mid = np.clip(1.0 - w_def - w_att, 0.0, 1.0)
-    w_sum = w_def + w_mid + w_att + 1e-12
-    return (w_def * threat_def + w_mid * threat_mid + w_att * threat_att) / w_sum
-
-
-def _location_factor_v31(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    lat = _lateral_relative_position(y)
-    depth = np.clip((x - XT_V31_LAT_GATE_X) / (FIELD_X - XT_V31_LAT_GATE_X), 0.0, 1.0)
-    zone_gate = _smootherstep(depth)
-    max_discount = XT_V31_LAT_DISC_MAX * zone_gate
-    lateral_curve = _smootherstep(lat ** XT_V3_LAT_CURVE_POWER)
-    return 1.0 - max_discount * lateral_curve
-
-
-def _build_heuristic_v31_threat_surface(Xc: np.ndarray, Yc: np.ndarray) -> np.ndarray:
-    zonal = _map_zonal_threat_v31(Xc)
-    surface = zonal * _location_factor_v31(Xc, Yc)
-    surface = np.clip(surface, 0.0, XT_V3_SURFACE_MAX)
-    return np.clip(_gaussian_smooth_2d(surface, XT_V31_GAUSS_SIGMA_X, XT_V31_GAUSS_SIGMA_Y), 0.0, XT_V3_SURFACE_MAX)
-
-
-def _markov_quadrant_bonus_field(nx: int, ny: int) -> np.ndarray:
-    from scipy.interpolate import RegularGridInterpolator
-
-    grid = load_markov_model("top5").xT
-    peak = max(float(grid.max()), 1e-9)
-    rel = (grid / peak) ** XT_V4_MARKOV_BONUS_POWER
-    bonus_coarse = rel * XT_V4_MARKOV_BONUS_MAX
-    y_coords = np.linspace(0.0, FIELD_Y, grid.shape[0])
-    x_coords = np.linspace(0.0, FIELD_X, grid.shape[1])
-    interp = RegularGridInterpolator(
-        (y_coords, x_coords), bonus_coarse, bounds_error=False, fill_value=0.0
-    )
-    xe = np.linspace(0.0, FIELD_X, nx)
-    ye = np.linspace(0.0, FIELD_Y, ny)
-    Xc, Yc = np.meshgrid(xe, ye)
-    pts = np.column_stack([Yc.ravel(), Xc.ravel()])
-    return interp(pts).reshape(ny, nx)
-
-
-def _markov_final_third_envelope(Xc: np.ndarray) -> np.ndarray:
-    t = _smootherstep(
-        np.clip((Xc - (FINAL_THIRD_LINE_X - XT_V4_MARKOV_GATE_BLEND)) / XT_V4_MARKOV_GATE_BLEND, 0.0, 1.0)
-    )
-    return XT_V4_MARKOV_DEF_MID_FLOOR + (1.0 - XT_V4_MARKOV_DEF_MID_FLOOR) * t
-
-
-def _build_heuristic_v4_fine_grid(nx: int = XT_V3_FINE_NX, ny: int = XT_V3_FINE_NY) -> np.ndarray:
-    xe = np.linspace(0.0, FIELD_X, nx)
-    ye = np.linspace(0.0, FIELD_Y, ny)
-    Xc, Yc = np.meshgrid(xe, ye)
-    base = _build_heuristic_v31_threat_surface(Xc, Yc)
-    bonus = _markov_quadrant_bonus_field(nx, ny) * _markov_final_third_envelope(Xc)
-    return np.clip(base + bonus, 0.0, XT_V4_SURFACE_MAX)
-
-
-@functools.lru_cache(maxsize=1)
-def _v4_interpolator():
-    from scipy.interpolate import RegularGridInterpolator
-
-    fine = _build_heuristic_v4_fine_grid()
-    nx, ny = fine.shape[1], fine.shape[0]
-    x_coords = np.linspace(0.0, FIELD_X, nx)
-    y_coords = np.linspace(0.0, FIELD_Y, ny)
-    return RegularGridInterpolator((y_coords, x_coords), fine, bounds_error=False, fill_value=0.0)
-
-
+# ── xT: Heurístico v4 — Top 5 (último terço) ─────────────────────────────────
 def _interp_xt(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    interp = _v4_interpolator()
-    pts = np.column_stack([y, x])
-    return interp(pts).astype(float)
-
-
-@functools.lru_cache(maxsize=8)
-def get_xt_quadrant_grid(cols: int = 12, rows: int = 8, samples_per_cell: int = 4) -> np.ndarray:
-    """Mean xT v4 per pitch quadrant (rows × cols), StatsBomb coordinates."""
-    cols = max(int(cols), 1)
-    rows = max(int(rows), 1)
-    samples_per_cell = max(int(samples_per_cell), 1)
-    x_edges = np.linspace(0.0, FIELD_X, cols + 1)
-    y_edges = np.linspace(0.0, FIELD_Y, rows + 1)
-    grid = np.zeros((rows, cols), dtype=float)
-    for r in range(rows):
-        for c in range(cols):
-            xs = np.linspace(x_edges[c], x_edges[c + 1], samples_per_cell)
-            ys = np.linspace(y_edges[r], y_edges[r + 1], samples_per_cell)
-            xc, yc = np.meshgrid(xs, ys)
-            grid[r, c] = float(_interp_xt(xc.ravel(), yc.ravel()).mean())
-    return grid
-
-
-def get_xt_surface_meta() -> dict[str, float]:
-    """Reference lines and goal position for xT map overlays."""
-    return {
-        "field_x": FIELD_X,
-        "field_y": FIELD_Y,
-        "half_line_x": HALF_LINE_X,
-        "final_third_line_x": FINAL_THIRD_LINE_X,
-        "attacking_two_thirds_x": OPT_ATTACKING_TWO_THIRDS_X,
-        "goal_x": GOAL_X,
-        "goal_y": GOAL_Y,
-        "surface_max": XT_V4_SURFACE_MAX,
-    }
-
-
-def _short_pass_multiplier_vec(dist: np.ndarray) -> np.ndarray:
-    blend_span = 4.0
-    out = np.ones_like(dist, dtype=float)
-    short = dist < XT_V4_SHORT_PASS_DIST
-    blend = (dist >= XT_V4_SHORT_PASS_DIST) & (dist < XT_V4_SHORT_PASS_DIST + blend_span)
-    out[short] = XT_V4_SHORT_PASS_FACTOR
-    if blend.any():
-        t = (dist[blend] - XT_V4_SHORT_PASS_DIST) / blend_span
-        out[blend] = XT_V4_SHORT_PASS_FACTOR + (1.0 - XT_V4_SHORT_PASS_FACTOR) * t
-    return out
-
-
-def _zone_max_delta_vec(x_start: np.ndarray) -> np.ndarray:
-    x = np.clip(x_start.astype(float), 0.0, FIELD_X)
-    caps = np.full_like(x, XT_V5_MAX_DELTA_BOX)
-    points = [
-        (0.0, XT_V5_MAX_DELTA_DEF),
-        (OPT_ATTACKING_TWO_THIRDS_X, XT_V5_MAX_DELTA_MID),
-        (FINAL_THIRD_LINE_X, XT_V5_MAX_DELTA_ATT),
-        (XT_V4_BOX_X_START, XT_V5_MAX_DELTA_BOX),
-    ]
-    for i in range(len(points) - 1):
-        x0, c0 = points[i]
-        x1, c1 = points[i + 1]
-        mask = (x >= x0) & (x <= x1)
-        if not mask.any():
-            continue
-        t = _smoothstep((x[mask] - x0) / max(x1 - x0, 1e-9))
-        caps[mask] = c0 + (c1 - c0) * t
-    return caps
+    return hx4.interp_xt_batch(x, y)
 
 
 def _adjust_delta_v4(
@@ -415,23 +215,20 @@ def _adjust_delta_v4(
     y_end: np.ndarray,
     pass_distance: np.ndarray,
 ) -> np.ndarray:
-    raw = np.where(is_won, xt_end - xt_start, 0.0)
-    mult = _short_pass_multiplier_vec(pass_distance)
-    pos = raw >= 0
-    adjusted = np.where(pos, np.minimum(raw * mult, _zone_max_delta_vec(x_start)), raw)
-
-    lat_start = np.abs(y_start - GOAL_Y) / (FIELD_Y / 2.0)
-    lat_end = np.abs(y_end - GOAL_Y) / (FIELD_Y / 2.0)
-    neg_recycle = (~pos) & (x_start < XT_V3_NEG_RECYCLE_X_MAX)
-    adjusted = np.where(neg_recycle & (lat_end < lat_start), raw * XT_V3_NEG_PENALTY_FACTOR, adjusted)
-    pressure = (
-        (~pos)
-        & (x_start < XT_V3_PRESSURE_X_MAX)
-        & (lat_start > XT_V3_WIDE_FRAC)
-        & (lat_end < lat_start - 0.12)
+    return hx4.adjust_delta_v4(
+        is_won, xt_start, xt_end, x_start, y_start, x_end, y_end, pass_distance
     )
-    adjusted = np.where(pressure, adjusted + XT_V3_PRESSURE_ESCAPE_BONUS, adjusted)
-    return adjusted
+
+
+@functools.lru_cache(maxsize=8)
+def get_xt_quadrant_grid(cols: int = 12, rows: int = 8, samples_per_cell: int = 4) -> np.ndarray:
+    """Mean xT per pitch quadrant (rows × cols), StatsBomb coordinates."""
+    return hx4.quadrant_xt_grid(cols, rows)
+
+
+def get_xt_surface_meta() -> dict[str, float]:
+    """Reference lines and goal position for xT map overlays."""
+    return hx4.surface_meta()
 
 
 def _impact_tier_rel_gain_vec(
