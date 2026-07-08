@@ -249,11 +249,15 @@ def draw_pass_origin_heatmap(
     rows: int = 6,
     mini: bool = False,
     tiny: bool = False,
+    compare: bool = False,
 ):
     """Heatmap of completed pass start locations (origin)."""
     cols = max(int(cols), 1)
     rows = max(int(rows), 1)
-    if tiny:
+    if compare:
+        figsize = (5.4, 3.6)
+        dpi = 180
+    elif tiny:
         figsize = (2.2, 1.45)
         dpi = 120
     elif mini:
@@ -306,20 +310,34 @@ def draw_pass_origin_heatmap(
             )
 
     pitch.draw(ax=ax)
-    if not mini and not tiny:
+    if not mini and not tiny and not compare:
         sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
         cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
         cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
         cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
         plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
         cbar.set_label("Passes completos", color="#c7cdda", fontsize=7 * scale)
-    title_size = 6.2 * scale if tiny else (7.0 * scale if mini else 8.2 * scale)
-    short_name = player_name.split()[0] if tiny and player_name else player_name
-    ax.set_title(
-        f"{short_name}\nOrigem · {match_label}" if tiny else f"{player_name}\nOrigem · {cols}×{rows} · {match_label}",
-        color="white", fontsize=title_size, pad=2 if tiny else (4 if mini else 5),
-    )
-    if not mini and not tiny:
+    if compare:
+        title_size = 8.0 * scale
+        title_pad = 6
+    elif tiny:
+        title_size = 6.2 * scale
+        title_pad = 2
+    elif mini:
+        title_size = 7.0 * scale
+        title_pad = 4
+    else:
+        title_size = 8.2 * scale
+        title_pad = 5
+    short_name = player_name.split()[0] if tiny and player_name and not compare else player_name
+    if compare:
+        title = f"{player_name}\nOrigem · {cols}×{rows}"
+    elif tiny:
+        title = f"{short_name}\nOrigem · {match_label}"
+    else:
+        title = f"{player_name}\nOrigem · {cols}×{rows} · {match_label}"
+    ax.set_title(title, color="white", fontsize=title_size, pad=title_pad)
+    if not mini and not tiny and not compare:
         _attack_arrow(fig, fig_w=fig_w)
     return fig
 

@@ -22,18 +22,38 @@ ORIGIN_GRID_ROWS = 6
 MIN_PASSES_ORIGIN = 50
 ORIGIN_PREFILTER_TOP_N = 50
 
-# Option A — percentile profile within league + position group.
+# Option A — percentile profile (dashboard metric groups only).
 SIMILARITY_METRICS_A: tuple[str, ...] = (
+    # Métricas Absolutas
     "impact_passes_p90",
     "phi_p90",
+    "dxt_p90",
+    # Métricas Relativas
     "impact_per_pass",
+    "phi_per_pass",
     "dxt_per_pass",
-    "progressive_passes_p90",
-    "final_third_passes_p90",
-    "key_passes",
+    "dxt_gt_01_pct",
+    # Long balls
+    "long_balls",
+    "long_impact_passes",
     "long_impact_per_long_pass",
+    # Construção
+    "construction_aip",
     "construction_aip_per_pass",
+    # Agressão
+    "aggression_aip",
     "aggression_aip_per_pass",
+)
+
+SIMILARITY_COMPARE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Métricas Absolutas", ("impact_passes_p90", "phi_p90", "dxt_p90")),
+    (
+        "Métricas Relativas",
+        ("impact_per_pass", "phi_per_pass", "dxt_per_pass", "dxt_gt_01_pct"),
+    ),
+    ("Long balls", ("long_balls", "long_impact_passes", "long_impact_per_long_pass")),
+    ("Construção", ("construction_aip", "construction_aip_per_pass")),
+    ("Agressão", ("aggression_aip", "aggression_aip_per_pass")),
 )
 
 # Option C — z-score distance (higher weight on core impact volume).
@@ -45,11 +65,13 @@ SIMILARITY_WEIGHTS_C: dict[str, float] = {
     "impact_per_pass": 1.5,
     "dxt_per_pass": 1.5,
     "phi_per_pass": 1.5,
-    "progressive_passes_p90": 1.0,
-    "final_third_passes_p90": 1.0,
-    "key_passes": 1.0,
+    "dxt_gt_01_pct": 1.0,
+    "long_balls": 1.0,
+    "long_impact_passes": 1.0,
     "long_impact_per_long_pass": 1.0,
+    "construction_aip": 1.0,
     "construction_aip_per_pass": 1.0,
+    "aggression_aip": 1.0,
     "aggression_aip_per_pass": 1.0,
 }
 
