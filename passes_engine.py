@@ -341,6 +341,38 @@ def _interp_xt(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return interp(pts).astype(float)
 
 
+@functools.lru_cache(maxsize=8)
+def get_xt_quadrant_grid(cols: int = 12, rows: int = 8, samples_per_cell: int = 4) -> np.ndarray:
+    """Mean xT v4 per pitch quadrant (rows × cols), StatsBomb coordinates."""
+    cols = max(int(cols), 1)
+    rows = max(int(rows), 1)
+    samples_per_cell = max(int(samples_per_cell), 1)
+    x_edges = np.linspace(0.0, FIELD_X, cols + 1)
+    y_edges = np.linspace(0.0, FIELD_Y, rows + 1)
+    grid = np.zeros((rows, cols), dtype=float)
+    for r in range(rows):
+        for c in range(cols):
+            xs = np.linspace(x_edges[c], x_edges[c + 1], samples_per_cell)
+            ys = np.linspace(y_edges[r], y_edges[r + 1], samples_per_cell)
+            xc, yc = np.meshgrid(xs, ys)
+            grid[r, c] = float(_interp_xt(xc.ravel(), yc.ravel()).mean())
+    return grid
+
+
+def get_xt_surface_meta() -> dict[str, float]:
+    """Reference lines and goal position for xT map overlays."""
+    return {
+        "field_x": FIELD_X,
+        "field_y": FIELD_Y,
+        "half_line_x": HALF_LINE_X,
+        "final_third_line_x": FINAL_THIRD_LINE_X,
+        "attacking_two_thirds_x": OPT_ATTACKING_TWO_THIRDS_X,
+        "goal_x": GOAL_X,
+        "goal_y": GOAL_Y,
+        "surface_max": XT_V4_SURFACE_MAX,
+    }
+
+
 def _short_pass_multiplier_vec(dist: np.ndarray) -> np.ndarray:
     blend_span = 4.0
     out = np.ones_like(dist, dtype=float)

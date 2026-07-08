@@ -29,7 +29,11 @@ from comparison_config import (
     normalize_classification_model,
     normalize_tier_model,
 )
-from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
+from passes_maps import (
+    draw_impact_pass_map,
+    draw_pass_destination_heatmap,
+    draw_xt_surface_heatmap,
+)
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
@@ -43,11 +47,13 @@ RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 CLASSIFICATION_MODEL_SELECT_KEY = "classification_model_select"
 TIER_MODEL_SELECT_KEY = "tier_model_select"
+XT_GRID_SELECT_KEY = "xt_grid_select"
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
 fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
+get_xt_quadrant_grid = pe.get_xt_quadrant_grid
 load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
 rank_to_display_score = pe.rank_to_display_score
@@ -284,6 +290,11 @@ def load_passes(
         normalize_tier_model(tier_model),
         normalize_classification_model(classification_model),
     )
+
+
+@st.cache_data(show_spinner=False)
+def load_xt_grid(cols: int, rows: int):
+    return get_xt_quadrant_grid(cols, rows)
 
 
 def _norm(s: str) -> str:
@@ -872,6 +883,44 @@ def render_model_selectors() -> tuple[str, str]:
     return classification_model, tier_model
 
 
+def render_xt_surface_section() -> None:
+    st.subheader("Mapa de calor — superfície xT v4")
+    st.caption(
+        "Valores por quadrante = média da superfície xT usada no engine (heurística v3.1 + bônus Markov). "
+        "Útil para entender por que passes geometricamente próximos ao gol podem ter ΔxT diferente."
+    )
+
+    grid_options = {
+        "12×8 (detalhado)": (12, 8),
+        "8×6": (8, 6),
+        "6×4 (resumido)": (6, 4),
+    }
+    grid_label = st.selectbox(
+        "Resolução do grid",
+        options=list(grid_options.keys()),
+        key=XT_GRID_SELECT_KEY,
+    )
+    cols, rows = grid_options[grid_label]
+    grid = load_xt_grid(cols, rows)
+
+    stat_cols = st.columns(4)
+    stat_cols[0].metric("xT mínimo", f"{float(grid.min()):.3f}")
+    stat_cols[1].metric("xT máximo", f"{float(grid.max()):.3f}")
+    stat_cols[2].metric("xT médio", f"{float(grid.mean()):.3f}")
+    stat_cols[3].metric("Quadrantes", f"{cols}×{rows}")
+
+    fig = draw_xt_surface_heatmap(cols=cols, rows=rows, compact=False)
+    st.pyplot(fig, clear_figure=True, use_container_width=True)
+
+    with st.expander("Tabela de valores por quadrante"):
+        import pandas as pd
+
+        x_labels = [f"x {i + 1}" for i in range(cols)]
+        y_labels = [f"y {rows - i}" for i in range(rows)]
+        table = pd.DataFrame(grid[::-1], index=y_labels, columns=x_labels)
+        st.dataframe(table.style.format("{:.3f}"), use_container_width=True)
+
+
 def main() -> None:
     classification_model, tier_model = render_model_selectors()
     sig = inspect.signature(build_analytics)
@@ -902,7 +951,7 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_dashboard, tab_comparison = st.tabs(["Dashboard", "Comparação"])
+    tab_dashboard, tab_comparison, tab_xt = st.tabs(["Dashboard", "Comparação", "Mapa xT"])
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
         st.divider()
@@ -920,6 +969,8 @@ def main() -> None:
                 comparison_players_by_id,
                 comparison_pool_by_group,
             )
+    with tab_xt:
+        render_xt_surface_section()
 
 
 if __name__ == "__main__":

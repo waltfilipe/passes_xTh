@@ -12,6 +12,8 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, Rectangle
 from mplsoccer import Pitch
 
+import passes_engine as pe
+
 FIG_W, FIG_H = 7.2, 4.8
 FIG_DPI = 220
 FIG_W_COMPACT, FIG_H_COMPACT = 6.8, 4.5
@@ -31,6 +33,11 @@ COLOR_HIGHLY_PROGRESSIVE = "#fcd34d"
 CMAP_PASS_DEST = LinearSegmentedColormap.from_list(
     "pass_dest", ["#1a1a2e", "#1e3a8a", "#3b82f6", "#fbbf24", "#ef4444"]
 )
+CMAP_XT_SURFACE = LinearSegmentedColormap.from_list(
+    "xt_surface", ["#0f172a", "#1e3a8a", "#0d9488", "#84cc16", "#facc15", "#ef4444"]
+)
+XT_HEATMAP_COLS_DEFAULT = 12
+XT_HEATMAP_ROWS_DEFAULT = 8
 
 
 def _map_scale(fig_w: float) -> float:
@@ -220,6 +227,114 @@ def draw_pass_destination_heatmap(
     ax.set_title(
         f"{player_name}\nDestino — passes impact · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
         color="white", fontsize=8.2 * scale, pad=5,
+    )
+    _attack_arrow(fig, fig_w=fig_w)
+    return fig
+
+
+def draw_xt_surface_heatmap(
+    *,
+    cols: int = XT_HEATMAP_COLS_DEFAULT,
+    rows: int = XT_HEATMAP_ROWS_DEFAULT,
+    compact: bool = False,
+):
+    """Heatmap of the xT v4 surface with quadrant mean values annotated."""
+    cols = max(int(cols), 1)
+    rows = max(int(rows), 1)
+    if compact:
+        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
+        dpi = FIG_DPI_COMPACT
+    else:
+        figsize = (FIG_W, FIG_H)
+        dpi = FIG_DPI
+
+    fig_w = figsize[0]
+    scale = _map_scale(fig_w)
+    meta = pe.get_xt_surface_meta()
+    grid = pe.get_xt_quadrant_grid(cols, rows)
+
+    fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
+    x_bins = np.linspace(0.0, FIELD_X, cols + 1)
+    y_bins = np.linspace(0.0, FIELD_Y, rows + 1)
+
+    vmax = float(meta["surface_max"])
+    norm = Normalize(vmin=0.0, vmax=vmax)
+
+    for iy in range(rows):
+        for ix in range(cols):
+            value = float(grid[iy, ix])
+            x0, x1 = x_bins[ix], x_bins[ix + 1]
+            y0, y1 = y_bins[iy], y_bins[iy + 1]
+            ax.add_patch(
+                Rectangle(
+                    (x0, y0),
+                    x1 - x0,
+                    y1 - y0,
+                    facecolor=CMAP_XT_SURFACE(norm(value)),
+                    edgecolor=(1, 1, 1, 0.22),
+                    linewidth=0.35,
+                    alpha=0.96,
+                    zorder=2,
+                )
+            )
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            cell_w, cell_h = x1 - x0, y1 - y0
+            fontsize = max(4.2, min(7.8, 5.8 * scale * min(cell_w / 10.0, cell_h / 10.0)))
+            text_color = "#0f172a" if value > vmax * 0.45 else "#f8fafc"
+            ax.text(
+                cx,
+                cy,
+                f"{value:.2f}",
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                color=text_color,
+                fontweight="600",
+                zorder=4,
+            )
+
+    pitch.draw(ax=ax)
+
+    for x_line, style in (
+        (meta["attacking_two_thirds_x"], {"color": "#94a3b8", "linestyle": (0, (4, 4)), "alpha": 0.55}),
+        (meta["half_line_x"], {"color": "#cbd5e1", "linestyle": (0, (2, 3)), "alpha": 0.65}),
+        (meta["final_third_line_x"], {"color": "#f8fafc", "linestyle": (0, (2, 2)), "alpha": 0.75}),
+    ):
+        ax.plot([x_line, x_line], [0, FIELD_Y], zorder=5, linewidth=0.9 * scale, **style)
+
+    ax.scatter(
+        [meta["goal_x"]],
+        [meta["goal_y"]],
+        s=38 * scale,
+        marker="*",
+        color="#fef08a",
+        edgecolors="#0f172a",
+        linewidths=0.4,
+        zorder=6,
+    )
+
+    sm = plt.cm.ScalarMappable(cmap=CMAP_XT_SURFACE, norm=norm)
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
+    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2f}"))
+    cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
+    plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
+    cbar.set_label("xT v4", color="#c7cdda", fontsize=7 * scale)
+
+    legend_handles = [
+        Line2D([0], [0], color="#94a3b8", lw=1.0, linestyle="--", label="2/3 ofensivo (x=40)"),
+        Line2D([0], [0], color="#cbd5e1", lw=1.0, linestyle=":", label="Meio-campo (x=60)"),
+        Line2D([0], [0], color="#f8fafc", lw=1.0, linestyle="-", label="Terço final (x=80)"),
+        Line2D([0], [0], marker="*", color="w", markerfacecolor="#fef08a", markersize=7,
+               linestyle="None", label="Gol adversário"),
+    ]
+    _add_map_legend(ax, legend_handles, fig_w=fig_w)
+
+    ax.set_title(
+        f"Superfície xT v4 · {cols}×{rows} quadrantes\n"
+        f"valores = média xT por célula · ataque →",
+        color="white",
+        fontsize=8.4 * scale,
+        pad=5,
     )
     _attack_arrow(fig, fig_w=fig_w)
     return fig
