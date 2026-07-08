@@ -865,6 +865,7 @@ def render_model_selectors() -> tuple[str, str]:
             help=(
                 "Atual: rel_gain > 0,30 (impact) e > 0,62 (high). "
                 "Fixo 0,30/0,50: high impact com limiar mais baixo. "
+                "Percentil p65/p85: top 35% e top 15%. "
                 "Percentil p70/p90: top 30% e top 10% entre passes que avançam com ΔxT > 0."
             ),
         )

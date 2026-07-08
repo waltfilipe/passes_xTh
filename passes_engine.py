@@ -23,7 +23,9 @@ from comparison_config import (
     COMPARISON_PROGRESSION_KEYS,
     TIER_MODEL_DEFAULT,
     TIER_MODEL_FIXED_30_50,
+    TIER_MODEL_PERCENTILE_P65_P85,
     TIER_MODEL_PERCENTILE_P70_P90,
+    TIER_MODEL_PERCENTILES,
     normalize_classification_model,
     normalize_tier_model,
 )
@@ -45,7 +47,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 27
+DATA_CACHE_VERSION = 28
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -502,12 +504,15 @@ def _resolve_tier_thresholds(
     model = normalize_tier_model(tier_model)
     if model == TIER_MODEL_FIXED_30_50:
         return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2_FIXED_50
-    if model == TIER_MODEL_PERCENTILE_P70_P90:
+    if model in TIER_MODEL_PERCENTILES:
+        p_tier1, p_tier2 = TIER_MODEL_PERCENTILES[model]
         return _impact_percentile_thresholds(
             xt_start,
             delta_xt,
             has_end=has_end,
             approaches_goal=approaches_goal,
+            p_tier1=p_tier1,
+            p_tier2=p_tier2,
         )
     return IMPACT_REL_GAIN_TIER1, IMPACT_REL_GAIN_TIER2
 
