@@ -50,7 +50,7 @@ except ImportError:
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 35
+DATA_CACHE_VERSION = 36
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -1426,6 +1426,30 @@ def load_passes_grouped(
     classification_model = normalize_classification_model(classification_model)
     xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
     frame = _load_season_pass_frame()
+    if frame.empty:
+        return {}
+    passes = _enrich_passes(
+        frame,
+        tier_model=tier_model,
+        classification_model=classification_model,
+        xt_surface_mode=xt_surface_mode,
+    )
+    return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
+
+
+@functools.lru_cache(maxsize=16)
+def load_serie_a_passes_grouped(
+    cache_version: int = DATA_CACHE_VERSION,
+    tier_model: str = TIER_MODEL_DEFAULT,
+    classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = XT_SURFACE_MODE_DEFAULT,
+) -> dict[str, pd.DataFrame]:
+    """Enriched Série A passes indexed by player_id (for origin similarity)."""
+    _ = cache_version
+    tier_model = normalize_tier_model(tier_model)
+    classification_model = normalize_classification_model(classification_model)
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
+    frame = _load_br_pass_frame()
     if frame.empty:
         return {}
     passes = _enrich_passes(

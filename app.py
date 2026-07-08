@@ -28,9 +28,12 @@ from comparison_config import (
 )
 from similarity_engine import (
     SIMILARITY_METRICS_A,
+    describe_dominant_origin_zone,
     find_similar_option_a,
     find_similar_option_c,
+    find_similar_option_origin,
     group_serie_a_pool,
+    pass_origin_profile,
     serie_a_search_group,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
@@ -299,6 +302,18 @@ def load_passes(
         normalize_tier_model(tier_model),
         normalize_classification_model(classification_model),
         normalize_xt_surface_mode(xt_surface_mode),
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_serie_a_passes(_cache_version: int = DATA_CACHE_VERSION):
+    if not hasattr(pe, "load_serie_a_passes_grouped"):
+        return {}
+    return pe.load_serie_a_passes_grouped(
+        _cache_version,
+        tier_model=FIXED_TIER_MODEL,
+        classification_model=FIXED_CLASSIFICATION_MODEL,
+        xt_surface_mode=FIXED_XT_SURFACE_MODE,
     )
 
 
@@ -718,7 +733,11 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
-def render_similarity_section(all_players: list[dict]) -> None:
+def render_similarity_section(
+    all_players: list[dict],
+    passes_by_player_sb: dict,
+    serie_a_passes: dict,
+) -> None:
     import pandas as pd
 
     st.subheader("Similaridade Série B → Série A")
@@ -777,22 +796,30 @@ def render_similarity_section(all_players: list[dict]) -> None:
         st.warning(f"Nenhum jogador elegível na Série A para o grupo «{search_group or sb_group}».")
         return
 
-    tab_a, tab_c = st.tabs(["Opção A — percentil", "Opção C — z-score"])
+    tab_a, tab_c, tab_origin = st.tabs(
+        ["Opção A — percentil", "Opção C — z-score", "Origem dos passes"]
+    )
 
-    def _results_df(results: list[dict]) -> pd.DataFrame:
+    def _results_df(results: list[dict], *, include_origin: bool = False) -> pd.DataFrame:
         rows = []
         for rank, r in enumerate(results, start=1):
-            rows.append({
+            row = {
                 "#": rank,
                 "Similaridade": f"{r.get('similarity_pct', 0):.1f}%",
                 "Jogador": r.get("player_name", "—"),
                 "Time": r.get("team", "—"),
                 "Posição": r.get("position", "—"),
-                "Impact p90": fmt_stat_value("impact_passes_p90", r.get("impact_passes_p90")),
-                "PHI p90": fmt_stat_value("phi_p90", r.get("phi_p90")),
-                "ΔxT / pass": fmt_stat_value("dxt_per_pass", r.get("dxt_per_pass")),
-                "Prog. p90": fmt_stat_value("progressive_passes_p90", r.get("progressive_passes_p90")),
-            })
+            }
+            if include_origin:
+                row["Origem dominante"] = r.get("origin_dominant", "—")
+            else:
+                row["Impact p90"] = fmt_stat_value("impact_passes_p90", r.get("impact_passes_p90"))
+                row["PHI p90"] = fmt_stat_value("phi_p90", r.get("phi_p90"))
+                row["ΔxT / pass"] = fmt_stat_value("dxt_per_pass", r.get("dxt_per_pass"))
+                row["Prog. p90"] = fmt_stat_value(
+                    "progressive_passes_p90", r.get("progressive_passes_p90")
+                )
+            rows.append(row)
         return pd.DataFrame(rows)
 
     with tab_a:
@@ -820,6 +847,51 @@ def render_similarity_section(all_players: list[dict]) -> None:
             with st.expander("Métricas usadas (Opção C)"):
                 st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
 
+    with tab_origin:
+        st.caption(
+            "Similaridade da região de origem dos passes completos: grid 12×8 no campo "
+            "(StatsBomb 120×80 m), proporção por zona e distância por cosseno entre perfis."
+        )
+        target_id = str(target["player_id"])
+        target_passes = passes_by_player_sb.get(target_id)
+        target_profile = pass_origin_profile(target_passes)
+        if target_profile is None:
+            st.warning(
+                "Sem passes completos suficientes para montar o perfil de origem deste jogador."
+            )
+            return
+
+        target_origin = describe_dominant_origin_zone(target_profile)
+        st.markdown(
+            f"Origem dominante (Série B): **{html.escape(target_origin)}**",
+            unsafe_allow_html=True,
+        )
+
+        if not serie_a_passes:
+            st.warning("Passes da Série A indisponíveis para comparação espacial.")
+            return
+
+        results_origin = find_similar_option_origin(
+            target_passes,
+            pool,
+            serie_a_passes,
+        )
+        if not results_origin:
+            st.info("Nenhum similar por origem de passe encontrado no pool.")
+        else:
+            st.dataframe(
+                _results_df(results_origin, include_origin=True),
+                use_container_width=True,
+                hide_index=True,
+            )
+            with st.expander("Como interpretar"):
+                st.markdown(
+                    "- **defesa (área)**: maior parte dos passes sai de dentro ou na entrada da área própria\n"
+                    "- **saída de bola**: origem predominante entre a área e o meio defensivo\n"
+                    "- **meio-campo** / **terço final**: origem mais avançada no campo\n"
+                    "- Esquerda / centro / direita: corredor lateral do campo (vista de cima)"
+                )
+
 
 def main() -> None:
     classification_model = FIXED_CLASSIFICATION_MODEL
@@ -837,6 +909,7 @@ def main() -> None:
             classification_model=classification_model,
             xt_surface_mode=xt_surface_mode,
         )
+        serie_a_passes = load_serie_a_passes()
 
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
@@ -847,7 +920,7 @@ def main() -> None:
         st.divider()
         render_rating_section(rated, selected_player_id=selected_player_id)
     with tab_similarity:
-        render_similarity_section(all_players)
+        render_similarity_section(all_players, passes_by_player, serie_a_passes)
 
 
 if __name__ == "__main__":

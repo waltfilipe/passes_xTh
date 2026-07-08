@@ -1,4 +1,4 @@
-"""Série B ↔ Série A player similarity (options A and C)."""
+"""Série B ↔ Série A player similarity (options A, B and C)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 
 from heuristic_scoring import POSITION_GROUPS_ORDER, position_group
+
+FIELD_X = 120.0
+FIELD_Y = 80.0
+ORIGIN_GRID_COLS = 12
+ORIGIN_GRID_ROWS = 8
+MIN_PASSES_ORIGIN = 50
 
 # Option A — percentile profile within league + position group.
 SIMILARITY_METRICS_A: tuple[str, ...] = (
@@ -97,6 +103,118 @@ def _distance_to_similarity(dist: float, scale: float) -> float:
     if scale <= 0:
         return 100.0 if dist == 0 else 0.0
     return float(np.clip(100.0 * (1.0 - dist / scale), 0.0, 100.0))
+
+
+def pass_origin_profile(
+    passes: pd.DataFrame | None,
+    *,
+    cols: int = ORIGIN_GRID_COLS,
+    rows: int = ORIGIN_GRID_ROWS,
+    completed_only: bool = True,
+) -> np.ndarray | None:
+    """Normalized 12×8 histogram of pass start locations (StatsBomb coords)."""
+    if passes is None or passes.empty:
+        return None
+    work = passes
+    if completed_only and "is_won" in work.columns:
+        work = work[work["is_won"].astype(bool)]
+    if work.empty or "x_start" not in work.columns or "y_start" not in work.columns:
+        return None
+
+    x = work["x_start"].to_numpy(dtype=float)
+    y = work["y_start"].to_numpy(dtype=float)
+    x_bins = np.linspace(0.0, FIELD_X, cols + 1)
+    y_bins = np.linspace(0.0, FIELD_Y, rows + 1)
+    ix = np.clip(np.digitize(x, x_bins, right=True) - 1, 0, cols - 1)
+    iy = np.clip(np.digitize(y, y_bins, right=True) - 1, 0, rows - 1)
+    flat_idx = iy * cols + ix
+    counts = np.bincount(flat_idx, minlength=rows * cols).astype(float)
+    total = float(counts.sum())
+    if total <= 0:
+        return None
+    return counts / total
+
+
+def describe_dominant_origin_zone(
+    profile: np.ndarray | None,
+    *,
+    cols: int = ORIGIN_GRID_COLS,
+    rows: int = ORIGIN_GRID_ROWS,
+) -> str:
+    if profile is None or profile.size != cols * rows:
+        return "—"
+    grid = profile.reshape(rows, cols)
+    iy, ix = np.unravel_index(int(grid.argmax()), grid.shape)
+    x_hi = (ix + 1) * FIELD_X / cols
+    y_mid = (iy + 0.5) * FIELD_Y / rows
+    pct = float(grid[iy, ix] * 100.0)
+
+    if x_hi <= 18:
+        x_desc = "defesa (área)"
+    elif x_hi <= 40:
+        x_desc = "saída de bola"
+    elif x_hi <= 80:
+        x_desc = "meio-campo"
+    else:
+        x_desc = "terço final"
+
+    if y_mid < FIELD_Y / 3:
+        y_desc = "esquerda"
+    elif y_mid > 2 * FIELD_Y / 3:
+        y_desc = "direita"
+    else:
+        y_desc = "centro"
+    return f"{x_desc} · {y_desc} ({pct:.0f}%)"
+
+
+def _cosine_similarity_pct(a: np.ndarray, b: np.ndarray) -> float:
+    na = float(np.linalg.norm(a))
+    nb = float(np.linalg.norm(b))
+    if na <= 0 or nb <= 0:
+        return 0.0
+    cos = float(np.dot(a, b) / (na * nb))
+    return float(np.clip(cos * 100.0, 0.0, 100.0))
+
+
+def _completed_pass_count(passes: pd.DataFrame | None) -> int:
+    if passes is None or passes.empty:
+        return 0
+    if "is_won" in passes.columns:
+        return int(passes["is_won"].astype(bool).sum())
+    return int(len(passes))
+
+
+def find_similar_option_origin(
+    target_passes: pd.DataFrame | None,
+    pool: list[dict],
+    passes_by_id: dict[str, pd.DataFrame],
+    *,
+    top_k: int = TOP_K_DEFAULT,
+    min_passes: int = MIN_PASSES_ORIGIN,
+) -> list[dict[str, Any]]:
+    """Cosine similarity of normalized pass-origin grids (all completed passes)."""
+    target_profile = pass_origin_profile(target_passes)
+    if target_profile is None:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for cand in pool:
+        pid = str(cand["player_id"])
+        passes = passes_by_id.get(pid)
+        if _completed_pass_count(passes) < min_passes:
+            continue
+        profile = pass_origin_profile(passes)
+        if profile is None:
+            continue
+        sim = _cosine_similarity_pct(target_profile, profile)
+        results.append({
+            **cand,
+            "similarity_pct": round(sim, 1),
+            "distance": round(1.0 - sim / 100.0, 4),
+            "origin_dominant": describe_dominant_origin_zone(profile),
+        })
+    results.sort(key=lambda r: (-r["similarity_pct"], r["distance"]))
+    return results[:top_k]
 
 
 def find_similar_option_a(
