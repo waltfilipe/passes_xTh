@@ -53,8 +53,8 @@ NX_XT_DISPLAY, NY_XT_DISPLAY = 16, 12
 
 # Display-only boosts on the 16×12 map (1-based column / y-line labels from the UI table).
 XT_MAP_ZONE_BOOSTS: tuple[tuple[int, tuple[int, ...], float], ...] = (
-    (15, (5, 6, 7, 8), 1.075),  # coluna 16 · linhas y5–y8 · +7,5%
-    (14, (5, 6, 7, 8), 1.050),  # coluna 15 · linhas y5–y8 · +5%
+    (15, (5, 6, 7, 8), 1.040),  # coluna 16 · linhas y5–y8 · +4%
+    (14, (5, 6, 7, 8), 1.020),  # coluna 15 · linhas y5–y8 · +2%
 )
 
 
