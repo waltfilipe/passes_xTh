@@ -14,10 +14,27 @@ for _path in (_APP_ROOT, _APP_ROOT / "scripts"):
     if _entry not in sys.path:
         sys.path.insert(0, _entry)
 
+
+def _load_similarity_engine():
+    """Load local similarity_engine.py explicitly (avoids path/shadowing on Streamlit Cloud)."""
+    import importlib.util
+
+    module_path = _APP_ROOT / "similarity_engine.py"
+    if not module_path.is_file():
+        raise ImportError(f"Arquivo não encontrado: {module_path}")
+    spec = importlib.util.spec_from_file_location("passes_xt_similarity_engine", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Não foi possível carregar {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["passes_xt_similarity_engine"] = module
+    return module
+
 import streamlit as st
 import streamlit.components.v1 as components
 
 import passes_engine as pe
+sim = _load_similarity_engine()
 from comparison_config import (
     CLASSIFICATION_MODEL_DEFAULT,
     TIER_MODEL_DEFAULT,
@@ -25,16 +42,6 @@ from comparison_config import (
     normalize_classification_model,
     normalize_tier_model,
     normalize_xt_surface_mode,
-)
-from similarity_engine import (
-    SIMILARITY_METRICS_A,
-    describe_dominant_origin_zone,
-    find_similar_option_a,
-    find_similar_option_c,
-    find_similar_option_origin,
-    group_serie_a_pool,
-    pass_origin_profile,
-    serie_a_search_group,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
@@ -759,7 +766,7 @@ def render_similarity_section(
         )
         return
 
-    serie_a_by_group = group_serie_a_pool(serie_a_players)
+    serie_a_by_group = sim.group_serie_a_pool(serie_a_players)
     players_by_id = {str(p["player_id"]): p for p in all_players}
     options = _player_options(all_players)
     if not options:
@@ -780,7 +787,7 @@ def render_similarity_section(
 
     target = dict(players_by_id[id_by_label[selected_label]])
     sb_group = str(target.get("position_group") or "—")
-    search_group = serie_a_search_group(sb_group)
+    search_group = sim.serie_a_search_group(sb_group)
     pool = serie_a_by_group.get(search_group or "", []) if search_group else []
 
     st.markdown(
@@ -826,26 +833,26 @@ def render_similarity_section(
         st.caption(
             "Distância euclidiana no perfil percentil (0–100) de cada métrica dentro do pool Série A."
         )
-        results_a = find_similar_option_a(target, pool)
+        results_a = sim.find_similar_option_a(target, pool)
         if not results_a:
             st.info("Nenhum similar encontrado.")
         else:
             st.dataframe(_results_df(results_a), use_container_width=True, hide_index=True)
             with st.expander("Métricas usadas (Opção A)"):
-                st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
+                st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
 
     with tab_c:
         st.caption(
             "Distância euclidiana ponderada em z-scores do pool Série A "
             "(maior peso em impact p90, PHI p90 e ΔxT p90)."
         )
-        results_c = find_similar_option_c(target, pool)
+        results_c = sim.find_similar_option_c(target, pool)
         if not results_c:
             st.info("Nenhum similar encontrado.")
         else:
             st.dataframe(_results_df(results_c), use_container_width=True, hide_index=True)
             with st.expander("Métricas usadas (Opção C)"):
-                st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
+                st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
 
     with tab_origin:
         st.caption(
@@ -854,14 +861,14 @@ def render_similarity_section(
         )
         target_id = str(target["player_id"])
         target_passes = passes_by_player_sb.get(target_id)
-        target_profile = pass_origin_profile(target_passes)
+        target_profile = sim.pass_origin_profile(target_passes)
         if target_profile is None:
             st.warning(
                 "Sem passes completos suficientes para montar o perfil de origem deste jogador."
             )
             return
 
-        target_origin = describe_dominant_origin_zone(target_profile)
+        target_origin = sim.describe_dominant_origin_zone(target_profile)
         st.markdown(
             f"Origem dominante (Série B): **{html.escape(target_origin)}**",
             unsafe_allow_html=True,
@@ -871,7 +878,7 @@ def render_similarity_section(
             st.warning("Passes da Série A indisponíveis para comparação espacial.")
             return
 
-        results_origin = find_similar_option_origin(
+        results_origin = sim.find_similar_option_origin(
             target_passes,
             pool,
             serie_a_passes,

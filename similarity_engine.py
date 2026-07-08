@@ -7,7 +7,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from heuristic_scoring import POSITION_GROUPS_ORDER, position_group
+POSITION_GROUPS_ORDER = (
+    "Zagueiros",
+    "Laterais",
+    "Meio-campistas",
+    "Extremos",
+    "Atacantes",
+)
 
 FIELD_X = 120.0
 FIELD_Y = 80.0
