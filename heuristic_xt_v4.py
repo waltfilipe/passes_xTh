@@ -51,6 +51,12 @@ XT_V5_MAX_DELTA_ATT, XT_V5_MAX_DELTA_BOX = 0.42, 0.52
 
 NX_XT_DISPLAY, NY_XT_DISPLAY = 16, 12
 
+# Display-only boosts on the 16×12 map (1-based column / y-line labels from the UI table).
+XT_MAP_ZONE_BOOSTS: tuple[tuple[int, tuple[int, ...], float], ...] = (
+    (15, (5, 6, 7, 8), 1.075),  # coluna 16 · linhas y5–y8 · +7,5%
+    (14, (5, 6, 7, 8), 1.050),  # coluna 15 · linhas y5–y8 · +5%
+)
+
 
 def _smoothstep(t: np.ndarray) -> np.ndarray:
     t = np.clip(t, 0.0, 1.0)
@@ -336,6 +342,27 @@ def adjust_delta_v4(
     return adjusted
 
 
+def _y_table_line_to_row(y_line: int, rows: int) -> int:
+    """Map 1-based y label (tabela do app) para índice de linha do grid."""
+    return rows - int(y_line)
+
+
+def _apply_xt_map_zone_boosts(grid: np.ndarray) -> np.ndarray:
+    """Ajustes manuais de exibição no mapa 16×12 (não altera o grid fino de passes)."""
+    rows, cols = grid.shape
+    if cols < 16 or rows < 12:
+        return grid
+    out = grid.copy()
+    for col_ix, y_lines, factor in XT_MAP_ZONE_BOOSTS:
+        if col_ix < 0 or col_ix >= cols:
+            continue
+        for y_line in y_lines:
+            iy = _y_table_line_to_row(y_line, rows)
+            if 0 <= iy < rows:
+                out[iy, col_ix] = min(float(out[iy, col_ix]) * factor, XT_V4_SURFACE_MAX)
+    return out
+
+
 @functools.lru_cache(maxsize=8)
 def quadrant_xt_grid(cols: int = NX_XT_DISPLAY, rows: int = NY_XT_DISPLAY) -> np.ndarray:
     """Display-oriented quadrant means (post-processed like wc-playeranalysis maps)."""
@@ -344,7 +371,8 @@ def quadrant_xt_grid(cols: int = NX_XT_DISPLAY, rows: int = NY_XT_DISPLAY) -> np
     fine = compute_heuristic_v4_fine_grid()
     zones = zone_xt_means(fine, cols, rows)
     processed = _heuristic_v4_post_process(zones)
-    return _symmetrize_pitch_width(processed)
+    symmetrized = _symmetrize_pitch_width(processed)
+    return _apply_xt_map_zone_boosts(symmetrized)
 
 
 def surface_meta() -> dict[str, float]:
