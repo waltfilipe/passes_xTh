@@ -19,6 +19,10 @@ from comparison_config import (
     COMPARISON_CARD_GROUPS,
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
+    IMPACT_MODEL_DEFAULT,
+    IMPACT_MODEL_OPT1_SHORT_FT,
+    IMPACT_MODEL_LABELS,
+    normalize_impact_model,
 )
 from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
 
@@ -38,7 +42,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 24
+DATA_CACHE_VERSION = 25
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -71,14 +75,6 @@ IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 IMPACT_REL_GAIN_MIN_HEADROOM = 0.05
 IMPACT_REL_GAIN_TIER1 = 0.30
 IMPACT_REL_GAIN_TIER2 = 0.62
-
-IMPACT_MODEL_DEFAULT = "atual"
-IMPACT_MODEL_OPT1_SHORT_FT = "opt1_short_ft"
-
-IMPACT_MODEL_LABELS: dict[str, str] = {
-    IMPACT_MODEL_DEFAULT: "Atual (ganho relativo)",
-    IMPACT_MODEL_OPT1_SHORT_FT: "Opção 1 + via curta",
-}
 
 # Opção 1: limiares relativos ajustados por distância do passe.
 IMPACT_OPT1_SHORT_DIST_MAX = 10.0
@@ -396,11 +392,6 @@ def _adjust_delta_v4(
     )
     adjusted = np.where(pressure, adjusted + XT_V3_PRESSURE_ESCAPE_BONUS, adjusted)
     return adjusted
-
-
-def normalize_impact_model(model: str | None) -> str:
-    key = str(model or IMPACT_MODEL_DEFAULT).strip().lower()
-    return key if key in IMPACT_MODEL_LABELS else IMPACT_MODEL_DEFAULT
 
 
 def _impact_tier_rel_gain_vec(

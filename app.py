@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import inspect
 import sys
 import unicodedata
 from pathlib import Path
@@ -21,12 +22,13 @@ from comparison_config import (
     COMPARISON_CARD_GROUPS,
     COMPARISON_IMPACT_KEYS,
     COMPARISON_PROGRESSION_KEYS,
+    IMPACT_MODEL_DEFAULT,
+    IMPACT_MODEL_LABELS,
+    normalize_impact_model,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
-IMPACT_MODEL_DEFAULT = pe.IMPACT_MODEL_DEFAULT
-IMPACT_MODEL_LABELS = pe.IMPACT_MODEL_LABELS
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
 ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
 RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
@@ -223,7 +225,11 @@ def load_analytics(
     _cache_version: int = DATA_CACHE_VERSION,
     impact_model: str = IMPACT_MODEL_DEFAULT,
 ):
-    return build_analytics(_cache_version, impact_model)
+    impact_model = normalize_impact_model(impact_model)
+    sig = inspect.signature(build_analytics)
+    if "impact_model" in sig.parameters:
+        return build_analytics(_cache_version, impact_model=impact_model)
+    return build_analytics(_cache_version)
 
 
 @st.cache_data(show_spinner=False)
@@ -231,7 +237,11 @@ def load_passes(
     _cache_version: int = DATA_CACHE_VERSION,
     impact_model: str = IMPACT_MODEL_DEFAULT,
 ):
-    return load_passes_grouped(_cache_version, impact_model)
+    impact_model = normalize_impact_model(impact_model)
+    sig = inspect.signature(load_passes_grouped)
+    if "impact_model" in sig.parameters:
+        return load_passes_grouped(_cache_version, impact_model=impact_model)
+    return load_passes_grouped(_cache_version)
 
 
 def _norm(s: str) -> str:
@@ -808,6 +818,13 @@ def render_impact_model_selector() -> str:
 
 def main() -> None:
     impact_model = render_impact_model_selector()
+    engine_supports_models = "impact_model" in inspect.signature(build_analytics).parameters
+    if impact_model != IMPACT_MODEL_DEFAULT and not engine_supports_models:
+        st.warning(
+            "O modelo alternativo ainda não está disponível neste deploy. "
+            "Reimplante o app no Streamlit Cloud para carregar a versão mais recente do engine."
+        )
+        impact_model = IMPACT_MODEL_DEFAULT
 
     with st.spinner("Carregando dados…"):
         _, all_players = load_analytics(impact_model=impact_model)
