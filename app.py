@@ -20,12 +20,8 @@ import streamlit.components.v1 as components
 import passes_engine as pe
 from comparison_config import (
     CLASSIFICATION_MODEL_DEFAULT,
-    COMPARISON_CARD_GROUPS,
-    COMPARISON_IMPACT_KEYS,
-    COMPARISON_PROGRESSION_KEYS,
     TIER_MODEL_DEFAULT,
     XT_SURFACE_MODE_DEFAULT,
-    XT_SURFACE_MODE_DESCRIPTIONS,
     normalize_classification_model,
     normalize_tier_model,
     normalize_xt_surface_mode,
@@ -39,11 +35,6 @@ from similarity_engine import (
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
-try:
-    from passes_maps import draw_xt_surface_heatmap
-except ImportError:
-    draw_xt_surface_heatmap = None
-
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
 ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
@@ -54,23 +45,19 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
-XT_GRID_SELECT_KEY = "xt_grid_select_v2"
 SIMILARITY_SELECT_KEY = "similarity_player_select"
 FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
 FIXED_TIER_MODEL = TIER_MODEL_DEFAULT
 FIXED_XT_SURFACE_MODE = XT_SURFACE_MODE_DEFAULT
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
-compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
 fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
-get_xt_quadrant_grid = getattr(pe, "get_xt_quadrant_grid", None)
 load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
 rank_to_display_score = pe.rank_to_display_score
 score_display_color = pe.score_display_color
 rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
-rate_comparison_player_vs_pool = getattr(pe, "rate_comparison_player_vs_pool", None)
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -239,7 +226,6 @@ st.title("Passes xTh — Série B")
 
 RATING_COLUMNS = ["Jogador", "Time", "Rating"]
 SELECTBOX_KEY = "map_player_select"
-COMPARISON_SELECT_KEY = "comparison_player_select"
 
 
 def _call_build_analytics(
@@ -314,13 +300,6 @@ def load_passes(
         normalize_classification_model(classification_model),
         normalize_xt_surface_mode(xt_surface_mode),
     )
-
-
-@st.cache_data(show_spinner=False)
-def load_xt_grid(cols: int, rows: int, xt_surface_mode: str = FIXED_XT_SURFACE_MODE):
-    if get_xt_quadrant_grid is None:
-        return None
-    return get_xt_quadrant_grid(cols, rows, xt_surface_mode=normalize_xt_surface_mode(xt_surface_mode))
 
 
 @st.cache_data(show_spinner=False)
@@ -665,156 +644,6 @@ def render_player_layout(player: dict, passes) -> None:
         st.markdown(_player_card_html(player, style_sections), unsafe_allow_html=True)
 
 
-def _comparison_card_header_html(title: str, card: dict) -> str:
-    score = card.get("card_rating")
-    pill = ""
-    if score is not None:
-        txt = fmt_rating_score(score)
-        rank_info = card.get("card_rank")
-        if rank_info:
-            color = rank_color(int(rank_info["rank"]), int(rank_info["total"]))
-            txt_color = _badge_text_color(color)
-            rank_txt = f'{int(rank_info["rank"])}/{int(rank_info["total"])}'
-            if card.get("rating_is_compared"):
-                rank_txt += " · vs aptos"
-            elif card.get("rating_is_solo"):
-                rank_txt += " · individual"
-            pill = (
-                f'<span class="section-rating-tip">'
-                f'<span class="section-rating-pill" style="background:{color};color:{txt_color}">'
-                f"{html.escape(txt)}</span>"
-                f'<span class="rating-tipbox">{html.escape(rank_txt)}</span>'
-                f"</span>"
-            )
-        else:
-            pill = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
-    return (
-        '<div class="stat-section-row">'
-        f'<span class="stat-section">{html.escape(title)}</span>'
-        f"{pill}"
-        "</div>"
-    )
-
-
-def _comparison_card_html(player: dict, section_key: str, title: str, keys: tuple[str, ...]) -> str:
-    cards = player.get("comparison_cards") if isinstance(player.get("comparison_cards"), dict) else {}
-    card = cards.get(section_key, {})
-    metric_ranks = card.get("metric_ranks") if isinstance(card.get("metric_ranks"), dict) else {}
-    parts = [_comparison_card_header_html(title, card)]
-    for key in keys:
-        parts.append(
-            _metric_line_html(
-                metric_label(key),
-                key,
-                _stat_display(player, key),
-                metric_ranks,
-                show_rank=True,
-            )
-        )
-    return '<div class="player-card">' + "".join(parts) + "</div>"
-
-
-def _resolve_comparison_player(
-    player: dict,
-    comparison_pool_by_group: dict[str, list[dict]],
-) -> dict:
-    resolved = dict(player)
-    if resolved.get("eligible_for_rating"):
-        return resolved
-    if rate_comparison_player_vs_pool is None:
-        return resolved
-    group = str(resolved.get("position_group") or "—")
-    pool = comparison_pool_by_group.get(group, [])
-    cards: dict[str, dict] = {}
-    for section_key, keys in COMPARISON_CARD_GROUPS.items():
-        cards[section_key] = rate_comparison_player_vs_pool(resolved, pool, section_key, keys)
-    resolved["comparison_cards"] = cards
-    return resolved
-
-
-def render_comparison_section(
-    all_players: list[dict],
-    comparison_players_by_id: dict[str, dict],
-    comparison_pool_by_group: dict[str, list[dict]],
-) -> None:
-    st.subheader("Comparação por perfil de passe")
-    st.caption(
-        "Rating por card = média das notas das métricas do card no grupo de posição "
-        "(1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        "Passes progressivos: regra Wyscout (completos, avançando em direção ao gol). "
-        "Terço final: passes completos com destino no terço final adversário."
-    )
-
-    if not all_players or not all(
-        all_players[0].get(key) is not None for key in COMPARISON_PROGRESSION_KEYS
-    ):
-        st.warning(
-            "Passes progressivos e terço final não foram calculados — o servidor está com "
-            "passes_engine.py desatualizado ou cache antigo. Reinicie o app no Streamlit Cloud "
-            "(Manage app → Reboot app) e confirme o deploy do commit mais recente."
-        )
-        return
-
-    options = _player_options(all_players)
-    if not options:
-        st.info("Nenhum jogador disponível para comparação.")
-        return
-
-    labels = [o[3] for o in options]
-    id_by_label = {o[3]: o[0] for o in options}
-
-    selected_labels = st.multiselect(
-        "Jogadores",
-        options=labels,
-        key=COMPARISON_SELECT_KEY,
-        placeholder="Selecione um ou mais jogadores",
-    )
-    if not selected_labels:
-        st.info("Selecione ao menos um jogador para ver os cards de comparação.")
-        return
-
-    for label in selected_labels:
-        player_id = id_by_label[label]
-        player = _resolve_comparison_player(
-            dict(comparison_players_by_id.get(player_id, {})),
-            comparison_pool_by_group,
-        )
-        if not player:
-            continue
-
-        st.markdown(
-            f"### {html.escape(player.get('player_name', '—'))} "
-            f"<span style='color:#94a3b8;font-size:0.95rem;font-weight:500'>"
-            f"{html.escape(str(player.get('team', '—')))} · "
-            f"{html.escape(str(player.get('position', '—')))} · "
-            f"{html.escape(str(player.get('position_group', '—')))}"
-            f"</span>",
-            unsafe_allow_html=True,
-        )
-        col_impact, col_progression = st.columns(2, gap="small")
-        with col_impact:
-            st.markdown(
-                _comparison_card_html(
-                    player,
-                    "comparison_impact",
-                    "Impacto & Agressão",
-                    COMPARISON_IMPACT_KEYS,
-                ),
-                unsafe_allow_html=True,
-            )
-        with col_progression:
-            st.markdown(
-                _comparison_card_html(
-                    player,
-                    "comparison_progression",
-                    "Progressão & Criação",
-                    COMPARISON_PROGRESSION_KEYS,
-                ),
-                unsafe_allow_html=True,
-            )
-        st.divider()
-
-
 def render_map_section(
     all_players: list[dict],
     players_by_id: dict[str, dict],
@@ -992,55 +821,6 @@ def render_similarity_section(all_players: list[dict]) -> None:
                 st.write(", ".join(metric_label(k) for k in SIMILARITY_METRICS_A))
 
 
-def render_xt_surface_section(xt_surface_mode: str) -> None:
-    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
-    st.subheader("Mapa xT por quadrante")
-    if draw_xt_surface_heatmap is None or get_xt_quadrant_grid is None:
-        st.warning(
-            "O mapa xT precisa da versão mais recente de passes_engine.py e passes_maps.py. "
-            "Reimplante o app no Streamlit Cloud (ou reinicie o serviço) para carregar o commit mais recente."
-        )
-        return
-    st.caption(XT_SURFACE_MODE_DESCRIPTIONS.get(xt_surface_mode, ""))
-
-    grid_options = {
-        "16×12 (padrão)": (16, 12),
-        "12×8": (12, 8),
-        "8×6": (8, 6),
-        "6×4 (resumido)": (6, 4),
-    }
-    grid_label = st.selectbox(
-        "Resolução do grid",
-        options=list(grid_options.keys()),
-        key=XT_GRID_SELECT_KEY,
-    )
-    cols, rows = grid_options[grid_label]
-    grid = load_xt_grid(cols, rows, xt_surface_mode=xt_surface_mode)
-    if grid is None:
-        st.warning("Não foi possível carregar a grade xT neste deploy.")
-        return
-
-    stat_cols = st.columns(4)
-    stat_cols[0].metric("xT mínimo", f"{float(grid.min()) * 100:.1f}%")
-    stat_cols[1].metric("xT máximo", f"{float(grid.max()) * 100:.1f}%")
-    stat_cols[2].metric("xT médio", f"{float(grid.mean()) * 100:.1f}%")
-    stat_cols[3].metric("Quadrantes", f"{cols}×{rows}")
-
-    fig = draw_xt_surface_heatmap(cols=cols, rows=rows, compact=False, xt_surface_mode=xt_surface_mode)
-    st.pyplot(fig, clear_figure=True, use_container_width=True)
-    st.caption(
-        f"{cols}×{rows} · Máx: {grid.max():.3f} · Média: {grid.mean():.3f}"
-    )
-
-    with st.expander("Tabela de valores por quadrante"):
-        import pandas as pd
-
-        x_labels = [f"x {i + 1}" for i in range(cols)]
-        y_labels = [f"y {rows - i}" for i in range(rows)]
-        table = pd.DataFrame(grid[::-1], index=y_labels, columns=x_labels)
-        st.dataframe(table.style.format("{:.1%}"), use_container_width=True)
-
-
 def main() -> None:
     classification_model = FIXED_CLASSIFICATION_MODEL
     tier_model = FIXED_TIER_MODEL
@@ -1061,30 +841,13 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_dashboard, tab_comparison, tab_similarity, tab_xt = st.tabs(
-        ["Dashboard", "Comparação", "Similaridade", "Mapa xT"]
-    )
+    tab_dashboard, tab_similarity = st.tabs(["Dashboard", "Similaridade"])
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
         st.divider()
         render_rating_section(rated, selected_player_id=selected_player_id)
-    with tab_comparison:
-        if compute_comparison_ratings is None:
-            st.error(
-                "A aba Comparação precisa da versão mais recente de passes_engine.py. "
-                "Reimplante o app no Streamlit Cloud (ou reinicie o serviço) para carregar o commit mais recente."
-            )
-        else:
-            comparison_players_by_id, comparison_pool_by_group = compute_comparison_ratings(all_players)
-            render_comparison_section(
-                all_players,
-                comparison_players_by_id,
-                comparison_pool_by_group,
-            )
     with tab_similarity:
         render_similarity_section(all_players)
-    with tab_xt:
-        render_xt_surface_section(xt_surface_mode)
 
 
 if __name__ == "__main__":
