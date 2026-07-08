@@ -71,30 +71,26 @@ def _fill_missing(values: np.ndarray) -> np.ndarray:
     return out
 
 
-def _percentile_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFrame:
+def _metric_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFrame:
     rows = []
     for p in players:
         row = {"player_id": p["player_id"]}
         for k in keys:
             row[k] = float(p.get(k) or 0.0)
         rows.append(row)
-    df = pd.DataFrame(rows).set_index("player_id")
-    pct = df.rank(pct=True, method="average") * 100.0
-    return pct
+    return pd.DataFrame(rows).set_index("player_id")
+
+
+def _percentile_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFrame:
+    df = _metric_table(players, keys)
+    return df.rank(pct=True, method="average") * 100.0
 
 
 def _zscore_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFrame:
-    rows = []
-    for p in players:
-        row = {"player_id": p["player_id"]}
-        for k in keys:
-            row[k] = float(p.get(k) or 0.0)
-        rows.append(row)
-    df = pd.DataFrame(rows).set_index("player_id")
+    df = _metric_table(players, keys)
     mean = df.mean()
     std = df.std(ddof=0).replace(0, np.nan)
-    z = (df - mean) / std
-    return z.fillna(0.0)
+    return ((df - mean) / std).fillna(0.0)
 
 
 def _distance_to_similarity(dist: float, scale: float) -> float:
@@ -148,11 +144,12 @@ def find_similar_option_c(
         return []
     keys = SIMILARITY_METRICS_C
     weights = np.array([SIMILARITY_WEIGHTS_C.get(k, 1.0) for k in keys], dtype=float)
-    z_pool = _zscore_table(pool, keys)
+    raw_pool = _metric_table(pool, keys)
+    mean = raw_pool.mean()
+    std = raw_pool.std(ddof=0).replace(0, np.nan)
+    z_pool = ((raw_pool - mean) / std).fillna(0.0)
 
     tvec = _metric_vector(target, keys)
-    mean = z_pool.mean()
-    std = z_pool.std(ddof=0).replace(0, np.nan)
     tz = ((pd.Series(tvec, index=keys) - mean) / std).fillna(0.0).to_numpy(dtype=float)
 
     diffs = z_pool.to_numpy(dtype=float) - tz
