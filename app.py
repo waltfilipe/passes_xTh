@@ -25,6 +25,8 @@ from comparison_config import (
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
+IMPACT_MODEL_DEFAULT = pe.IMPACT_MODEL_DEFAULT
+IMPACT_MODEL_LABELS = pe.IMPACT_MODEL_LABELS
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
 ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
 RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
@@ -34,6 +36,7 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
+IMPACT_MODEL_SELECT_KEY = "impact_model_select"
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
@@ -216,13 +219,19 @@ COMPARISON_SELECT_KEY = "comparison_player_select"
 
 
 @st.cache_data(show_spinner=False)
-def load_analytics(_cache_version: int = DATA_CACHE_VERSION):
-    return build_analytics(_cache_version)
+def load_analytics(
+    _cache_version: int = DATA_CACHE_VERSION,
+    impact_model: str = IMPACT_MODEL_DEFAULT,
+):
+    return build_analytics(_cache_version, impact_model)
 
 
 @st.cache_data(show_spinner=False)
-def load_passes(_cache_version: int = DATA_CACHE_VERSION):
-    return load_passes_grouped(_cache_version)
+def load_passes(
+    _cache_version: int = DATA_CACHE_VERSION,
+    impact_model: str = IMPACT_MODEL_DEFAULT,
+):
+    return load_passes_grouped(_cache_version, impact_model)
 
 
 def _norm(s: str) -> str:
@@ -779,10 +788,30 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
+def render_impact_model_selector() -> str:
+    options = list(IMPACT_MODEL_LABELS.keys())
+    with st.sidebar:
+        st.markdown("### Modelo de impacto")
+        impact_model = st.selectbox(
+            "Classificação",
+            options=options,
+            format_func=lambda key: IMPACT_MODEL_LABELS[key],
+            key=IMPACT_MODEL_SELECT_KEY,
+            label_visibility="collapsed",
+            help=(
+                "Atual: ganho relativo ΔxT/(1−xT) com limiares 0,30 / 0,62. "
+                "Opção 1 + via curta: ajusta limiares por distância e valoriza passes curtos no terço final."
+            ),
+        )
+    return impact_model
+
+
 def main() -> None:
+    impact_model = render_impact_model_selector()
+
     with st.spinner("Carregando dados…"):
-        _, all_players = load_analytics()
-        passes_by_player = load_passes()
+        _, all_players = load_analytics(impact_model=impact_model)
+        passes_by_player = load_passes(impact_model=impact_model)
 
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")

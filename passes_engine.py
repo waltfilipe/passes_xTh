@@ -38,7 +38,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 23
+DATA_CACHE_VERSION = 24
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -71,6 +71,27 @@ IMPACT_PASS_MIN_GOAL_APPROACH_REST = 10.0
 IMPACT_REL_GAIN_MIN_HEADROOM = 0.05
 IMPACT_REL_GAIN_TIER1 = 0.30
 IMPACT_REL_GAIN_TIER2 = 0.62
+
+IMPACT_MODEL_DEFAULT = "atual"
+IMPACT_MODEL_OPT1_SHORT_FT = "opt1_short_ft"
+
+IMPACT_MODEL_LABELS: dict[str, str] = {
+    IMPACT_MODEL_DEFAULT: "Atual (ganho relativo)",
+    IMPACT_MODEL_OPT1_SHORT_FT: "Opção 1 + via curta",
+}
+
+# Opção 1: limiares relativos ajustados por distância do passe.
+IMPACT_OPT1_SHORT_DIST_MAX = 10.0
+IMPACT_OPT1_LONG_DIST_MIN = 20.0
+IMPACT_OPT1_SHORT_TIER1_MULT = 0.85
+IMPACT_OPT1_SHORT_TIER2_MULT = 0.90
+IMPACT_OPT1_LONG_TIER1_MULT = 1.25
+IMPACT_OPT1_LONG_TIER2_MULT = 1.20
+
+# Via curta no terço final (tier 1 alternativo).
+IMPACT_SHORT_FT_MAX_DIST = 15.0
+IMPACT_SHORT_FT_MIN_DELTA = 0.06
+IMPACT_SHORT_FT_MIN_APPROACH = 5.0
 # Legacy absolute thresholds (unused for impact tier; kept for reference tooling).
 XT_V3_PROG_FLOOR_CLASS = 0.12
 XT_V3_PROG_SCALE_CLASS = 0.19
@@ -377,21 +398,90 @@ def _adjust_delta_v4(
     return adjusted
 
 
-def _impact_tier_vec(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
-    """0 = none, 1 = impact, 2 = high impact.
+def normalize_impact_model(model: str | None) -> str:
+    key = str(model or IMPACT_MODEL_DEFAULT).strip().lower()
+    return key if key in IMPACT_MODEL_LABELS else IMPACT_MODEL_DEFAULT
 
-    Relative threat gain: ΔxT / (1 − xT_start). Defensive passes need a larger
-    share of remaining headroom to qualify as impact.
-    """
+
+def _impact_tier_rel_gain_vec(
+    xt_start: np.ndarray,
+    delta_xt: np.ndarray,
+    tier1: float | np.ndarray,
+    tier2: float | np.ndarray,
+) -> np.ndarray:
     tier = np.zeros(len(delta_xt), dtype=np.int8)
     headroom = np.maximum(1.0 - xt_start, IMPACT_REL_GAIN_MIN_HEADROOM)
     rel_gain = delta_xt / headroom
     pos = rel_gain > 0
     if not pos.any():
         return tier
-    tier[pos & (rel_gain > IMPACT_REL_GAIN_TIER1) & (rel_gain <= IMPACT_REL_GAIN_TIER2)] = 1
-    tier[pos & (rel_gain > IMPACT_REL_GAIN_TIER2)] = 2
+    tier[pos & (rel_gain > tier1) & (rel_gain <= tier2)] = 1
+    tier[pos & (rel_gain > tier2)] = 2
     return tier
+
+
+def _impact_tier_vec_atual(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
+    """Atual: ganho relativo com limiares fixos 0.30 / 0.62."""
+    return _impact_tier_rel_gain_vec(
+        xt_start,
+        delta_xt,
+        IMPACT_REL_GAIN_TIER1,
+        IMPACT_REL_GAIN_TIER2,
+    )
+
+
+def _impact_tier_vec_opt1(xt_start: np.ndarray, delta_xt: np.ndarray, distance: np.ndarray) -> np.ndarray:
+    """Opção 1: limiar relativo mais alto em longos e mais baixo em curtos."""
+    tier1 = np.full(len(distance), IMPACT_REL_GAIN_TIER1, dtype=float)
+    tier2 = np.full(len(distance), IMPACT_REL_GAIN_TIER2, dtype=float)
+    short_mask = distance <= IMPACT_OPT1_SHORT_DIST_MAX
+    long_mask = distance > IMPACT_OPT1_LONG_DIST_MIN
+    tier1[short_mask] *= IMPACT_OPT1_SHORT_TIER1_MULT
+    tier2[short_mask] *= IMPACT_OPT1_SHORT_TIER2_MULT
+    tier1[long_mask] *= IMPACT_OPT1_LONG_TIER1_MULT
+    tier2[long_mask] *= IMPACT_OPT1_LONG_TIER2_MULT
+    return _impact_tier_rel_gain_vec(xt_start, delta_xt, tier1, tier2)
+
+
+def _short_final_third_tier_vec(
+    x_end: np.ndarray,
+    delta_xt: np.ndarray,
+    distance: np.ndarray,
+    geom_progress: np.ndarray,
+) -> np.ndarray:
+    """Via curta: ≤15 m, terço final, ΔxT > 0.06, avanço ≥ 5 m → tier 1."""
+    short_ft = (
+        (distance <= IMPACT_SHORT_FT_MAX_DIST)
+        & (x_end >= FINAL_THIRD_LINE_X)
+        & (delta_xt > IMPACT_SHORT_FT_MIN_DELTA)
+        & (geom_progress >= IMPACT_SHORT_FT_MIN_APPROACH)
+    )
+    return short_ft.astype(np.int8)
+
+
+def _impact_tier_for_model(
+    impact_model: str,
+    *,
+    xt_start: np.ndarray,
+    delta_xt: np.ndarray,
+    x_start: np.ndarray,
+    y_start: np.ndarray,
+    x_end: np.ndarray,
+    y_end: np.ndarray,
+    distance: np.ndarray,
+) -> np.ndarray:
+    model = normalize_impact_model(impact_model)
+    geom_progress = _goal_dist_vec(x_start, y_start) - _goal_dist_vec(x_end, y_end)
+    if model == IMPACT_MODEL_OPT1_SHORT_FT:
+        tier = _impact_tier_vec_opt1(xt_start, delta_xt, distance)
+        short_ft = _short_final_third_tier_vec(x_end, delta_xt, distance, geom_progress)
+        return np.maximum(tier, short_ft)
+    return _impact_tier_vec_atual(xt_start, delta_xt)
+
+
+def _impact_tier_vec(xt_start: np.ndarray, delta_xt: np.ndarray) -> np.ndarray:
+    """Backward-compatible alias for the default impact model."""
+    return _impact_tier_vec_atual(xt_start, delta_xt)
 
 
 def _goal_dist_vec(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -583,7 +673,11 @@ def build_player_registry(frame: pd.DataFrame) -> list[dict]:
     ]
 
 
-def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
+def _enrich_passes(
+    frame: pd.DataFrame,
+    impact_model: str = IMPACT_MODEL_DEFAULT,
+) -> pd.DataFrame:
+    impact_model = normalize_impact_model(impact_model)
     sx, sy = _wyscout_to_sb(frame["start_x"], frame["start_y"])
     has_end = frame["end_x"].notna() & frame["end_y"].notna()
     ex = np.full(len(frame), np.nan)
@@ -634,7 +728,16 @@ def _enrich_passes(frame: pd.DataFrame) -> pd.DataFrame:
         out["xt_end_v4"] = 0.0
         out["delta_xt_v4"] = 0.0
 
-    tier = _impact_tier_vec(out["xt_start_v4"].to_numpy(), out["delta_xt_v4"].to_numpy())
+    tier = _impact_tier_for_model(
+        impact_model,
+        xt_start=out["xt_start_v4"].to_numpy(),
+        delta_xt=out["delta_xt_v4"].to_numpy(),
+        x_start=out["x_start"].to_numpy(),
+        y_start=out["y_start"].to_numpy(),
+        x_end=out["x_end"].to_numpy(),
+        y_end=out["y_end"].to_numpy(),
+        distance=out["pass_distance"].to_numpy(),
+    )
     approaches = _approaches_goal_vec(
         out["x_start"].to_numpy(), out["y_start"].to_numpy(),
         out["x_end"].to_numpy(), out["y_end"].to_numpy(),
@@ -1277,26 +1380,34 @@ def compute_comparison_ratings(
     return players_by_id, pool_by_group
 
 
-@functools.lru_cache(maxsize=1)
-def load_passes_grouped(cache_version: int = DATA_CACHE_VERSION) -> dict[str, pd.DataFrame]:
+@functools.lru_cache(maxsize=4)
+def load_passes_grouped(
+    cache_version: int = DATA_CACHE_VERSION,
+    impact_model: str = IMPACT_MODEL_DEFAULT,
+) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
     _ = cache_version
+    impact_model = normalize_impact_model(impact_model)
     frame = _load_season_pass_frame()
     if frame.empty:
         return {}
-    passes = _enrich_passes(frame)
+    passes = _enrich_passes(frame, impact_model=impact_model)
     return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
 
 
-def build_analytics(cache_version: int = DATA_CACHE_VERSION) -> tuple[list[dict], list[dict]]:
+def build_analytics(
+    cache_version: int = DATA_CACHE_VERSION,
+    impact_model: str = IMPACT_MODEL_DEFAULT,
+) -> tuple[list[dict], list[dict]]:
     """Load CSV once, compute all player metrics. Returns (registry, eligible_players)."""
     _ = cache_version
+    impact_model = normalize_impact_model(impact_model)
     frame = _load_season_pass_frame()
     if frame.empty:
         return [], []
 
     registry = build_player_registry(frame)
-    passes = _enrich_passes(frame)
+    passes = _enrich_passes(frame, impact_model=impact_model)
     minutes_info = _load_minutes_info(frame)
 
     players: list[dict] = []
