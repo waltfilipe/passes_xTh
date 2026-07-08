@@ -60,7 +60,6 @@ RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 SIMILARITY_TOP_K = 10
-SIMILARITY_DIRECTION_KEY = "similarity_direction"
 SIMILARITY_SELECT_SB_KEY = "similarity_player_select_sb"
 SIMILARITY_SELECT_SA_KEY = "similarity_player_select_sa"
 FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
@@ -747,61 +746,164 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
-def _render_similarity_target_card(
+def _render_similarity_player_panel(
     player: dict,
     passes,
     *,
     league: str,
-    pool_label: str,
-    pool_size: int,
+    similarity_pct: float | None = None,
 ) -> None:
-    name = html.escape(str(player.get("player_name", "—")))
-    team = html.escape(str(player.get("team", "—")))
-    position = html.escape(str(player.get("position", "—")))
-    group = html.escape(str(player.get("position_group", "—")))
-    minutes_txt = fmt_stat_value("minutes", player.get("minutes"))
-    passes_txt = fmt_stat_value("passes_completed", player.get("passes_completed"))
+    header = (
+        f"**{html.escape(str(player.get('player_name', '—')))}** · "
+        f"{html.escape(str(player.get('team', '—')))} · "
+        f"{html.escape(str(player.get('position', '—')))} · {html.escape(league)}"
+    )
+    if similarity_pct is not None:
+        header += f" · similaridade **{similarity_pct:.1f}%**"
+    st.markdown(header, unsafe_allow_html=True)
 
-    col_info, col_map = st.columns([1.0, 1.15], gap="medium")
-    with col_info:
-        st.markdown(
-            f"### {name}\n"
-            f"{team} · {position} · {group} · **{html.escape(league)}**",
-            unsafe_allow_html=True,
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
+    m2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
+    m3.metric("Impact p90", fmt_stat_value("impact_passes_p90", player.get("impact_passes_p90")))
+
+    profile = sim.pass_origin_profile(passes) if passes is not None else None
+    if profile is not None:
+        st.caption(f"Origem dominante: {sim.describe_dominant_origin_zone(profile)}")
+
+    if passes is not None and not passes.empty:
+        fig = draw_pass_origin_heatmap(
+            passes,
+            str(player.get("player_name", "—")),
+            str(player.get("team", "—")),
+            tiny=True,
         )
-        m1, m2 = st.columns(2)
-        m1.metric("Minutos", minutes_txt)
-        m2.metric("Passes", passes_txt)
-        profile = sim.pass_origin_profile(passes) if passes is not None else None
-        if profile is not None:
-            origin_txt = sim.describe_dominant_origin_zone(profile)
-            st.caption(f"Origem dominante: {origin_txt}")
-        st.caption(f"Pool de busca: **{html.escape(pool_label)}** ({pool_size} jogadores)")
+        st.pyplot(fig, clear_figure=True, use_container_width=False)
+    else:
+        st.caption("Sem passes para heatmap de origem.")
 
-    with col_map:
-        if passes is not None and not passes.empty:
-            fig = draw_pass_origin_heatmap(
-                passes,
-                str(player.get("player_name", "—")),
-                str(player.get("team", "—")),
-                mini=True,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
+
+def _similarity_results_df(results: list[dict], *, include_origin: bool = False):
+    import pandas as pd
+
+    rows = []
+    for rank, row in enumerate(results, start=1):
+        entry = {
+            "#": rank,
+            "Similaridade": f"{row.get('similarity_pct', 0):.1f}%",
+            "Jogador": row.get("player_name", "—"),
+            "Time": row.get("team", "—"),
+            "Posição": row.get("position", "—"),
+            "_player_id": str(row.get("player_id", "")),
+        }
+        if include_origin:
+            entry["Origem dominante"] = row.get("origin_dominant", "—")
         else:
-            st.info("Sem passes para mapa de origem.")
+            entry["Impact p90"] = fmt_stat_value("impact_passes_p90", row.get("impact_passes_p90"))
+            entry["PHI p90"] = fmt_stat_value("phi_p90", row.get("phi_p90"))
+            entry["ΔxT / pass"] = fmt_stat_value("dxt_per_pass", row.get("dxt_per_pass"))
+            entry["Prog. p90"] = fmt_stat_value(
+                "progressive_passes_p90", row.get("progressive_passes_p90")
+            )
+        rows.append(entry)
+    return pd.DataFrame(rows)
+
+
+def _render_similarity_results_tab(
+    *,
+    results: list[dict],
+    target: dict,
+    target_passes,
+    pool_passes: dict,
+    target_league: str,
+    similar_league: str,
+    pick_key: str,
+    include_origin: bool,
+) -> None:
+    import pandas as pd
+
+    if not results:
+        st.info("Nenhum similar encontrado.")
+        return
+
+    df = _similarity_results_df(results, include_origin=include_origin)
+    display_df = df.drop(columns=["_player_id"])
+    pick = st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key=pick_key,
+    )
+
+    selected_rows: list[int] = []
+    if pick is not None:
+        selection = getattr(pick, "selection", None)
+        if selection is not None:
+            selected_rows = list(getattr(selection, "rows", []) or [])
+        elif isinstance(pick, dict):
+            selected_rows = list(pick.get("selection", {}).get("rows", []) or [])
+    if not selected_rows and pick_key in st.session_state:
+        state = st.session_state.get(pick_key)
+        if isinstance(state, dict):
+            selected_rows = list(state.get("selection", {}).get("rows", []) or [])
+
+    if not selected_rows:
+        st.caption("Clique em uma linha da tabela para comparar com o jogador selecionado.")
+        return
+
+    similar = dict(results[int(selected_rows[0])])
+    similar_id = str(similar.get("player_id", ""))
+    similar_passes = pool_passes.get(similar_id)
+
+    st.markdown("#### Comparação")
+    col_target, col_similar = st.columns(2, gap="medium")
+    with col_target:
+        st.markdown(f"**Referência ({target_league})**")
+        _render_similarity_player_panel(target, target_passes, league=target_league)
+    with col_similar:
+        st.markdown(f"**Similar ({similar_league})**")
+        _render_similarity_player_panel(
+            similar,
+            similar_passes,
+            league=similar_league,
+            similarity_pct=float(similar.get("similarity_pct") or 0),
+        )
+
+    compare_metrics = [
+        ("Impact p90", "impact_passes_p90"),
+        ("PHI p90", "phi_p90"),
+        ("ΔxT / pass", "dxt_per_pass"),
+        ("Prog. p90", "progressive_passes_p90"),
+        ("Passes", "passes_completed"),
+        ("Minutos", "minutes"),
+    ]
+    compare_rows = []
+    for label, key in compare_metrics:
+        compare_rows.append({
+            "Métrica": label,
+            target_league: fmt_stat_value(key, target.get(key)),
+            similar_league: fmt_stat_value(key, similar.get(key)),
+        })
+    st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
 
 
 def render_similarity_section(
     all_players: list[dict],
     passes_by_player_sb: dict,
     serie_a_passes: dict,
+    *,
+    sb_to_sa: bool,
 ) -> None:
     import pandas as pd
 
-    st.subheader("Similaridade entre ligas")
+    title = "Similaridade B → A" if sb_to_sa else "Similaridade A → B"
+    st.subheader(title)
     st.caption(
-        f"Top {SIMILARITY_TOP_K} jogadores mais parecidos na mesma posição detalhada "
-        f"(LB, RB, CM, LW…). Fonte Série A: season_all_brfull.csv com position_raw."
+        f"Selecione um jogador da {'Série B' if sb_to_sa else 'Série A'}; "
+        f"a tabela mostra os top {SIMILARITY_TOP_K} da {'Série A' if sb_to_sa else 'Série B'} "
+        "na mesma posição detalhada. Clique em uma linha para comparar."
     )
 
     if not all_players:
@@ -815,14 +917,7 @@ def render_similarity_section(
         )
         return
 
-    direction = st.radio(
-        "Direção da busca",
-        options=("Série B → Série A", "Série A → Série B"),
-        horizontal=True,
-        key=SIMILARITY_DIRECTION_KEY,
-    )
-    sb_to_sa = direction == "Série B → Série A"
-
+    prefix = "ba" if sb_to_sa else "ab"
     serie_a_by_pos = sim.group_players_by_detailed_position(serie_a_players)
     sb_by_pos = sim.group_players_by_detailed_position(all_players)
     players_sb_by_id = {str(p["player_id"]): p for p in all_players}
@@ -882,106 +977,93 @@ def render_similarity_section(
         )
         return
 
-    _render_similarity_target_card(
-        target,
-        target_passes,
-        league=target_league,
-        pool_label=pool_label,
-        pool_size=len(pool),
+    st.markdown(
+        f"**{html.escape(str(target.get('player_name', '—')))}** · "
+        f"{html.escape(str(target.get('team', '—')))} · "
+        f"{html.escape(str(target.get('position', '—')))} · "
+        f"{html.escape(target_league)} → pool **{html.escape(pool_label)}** ({len(pool)} jogadores)",
+        unsafe_allow_html=True,
     )
-    st.divider()
+    c1, c2 = st.columns(2)
+    c1.metric("Minutos", fmt_stat_value("minutes", target.get("minutes")))
+    c2.metric("Passes", fmt_stat_value("passes_completed", target.get("passes_completed")))
 
     tab_a, tab_c, tab_origin = st.tabs(
         ["Opção A — percentil", "Opção C — z-score", "Origem dos passes"]
     )
 
-    def _results_df(results: list[dict], *, include_origin: bool = False) -> pd.DataFrame:
-        rows = []
-        for rank, r in enumerate(results, start=1):
-            row = {
-                "#": rank,
-                "Similaridade": f"{r.get('similarity_pct', 0):.1f}%",
-                "Jogador": r.get("player_name", "—"),
-                "Time": r.get("team", "—"),
-                "Posição": r.get("position", "—"),
-            }
-            if include_origin:
-                row["Origem dominante"] = r.get("origin_dominant", "—")
-            else:
-                row["Impact p90"] = fmt_stat_value("impact_passes_p90", r.get("impact_passes_p90"))
-                row["PHI p90"] = fmt_stat_value("phi_p90", r.get("phi_p90"))
-                row["ΔxT / pass"] = fmt_stat_value("dxt_per_pass", r.get("dxt_per_pass"))
-                row["Prog. p90"] = fmt_stat_value(
-                    "progressive_passes_p90", r.get("progressive_passes_p90")
-                )
-            rows.append(row)
-        return pd.DataFrame(rows)
-
     top_k = SIMILARITY_TOP_K
-    dest_league = "Série A" if sb_to_sa else "Série B"
+    target_league_label = target_league
+    similar_league_label = "Série A" if sb_to_sa else "Série B"
 
     with tab_a:
         st.caption(
-            f"Distância euclidiana no perfil percentil (0–100) dentro do pool {dest_league}."
+            f"Distância euclidiana no perfil percentil (0–100) dentro do pool {similar_league_label}."
         )
         results_a = sim.find_similar_option_a(target, pool, top_k=top_k)
-        if not results_a:
-            st.info("Nenhum similar encontrado.")
-        else:
-            st.dataframe(_results_df(results_a), use_container_width=True, hide_index=True)
-            with st.expander("Métricas usadas (Opção A)"):
-                st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
+        _render_similarity_results_tab(
+            results=results_a,
+            target=target,
+            target_passes=target_passes,
+            pool_passes=pool_passes,
+            target_league=target_league_label,
+            similar_league=similar_league_label,
+            pick_key=f"sim_{prefix}_pick_a",
+            include_origin=False,
+        )
+        with st.expander("Métricas usadas (Opção A)"):
+            st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
 
     with tab_c:
         st.caption(
-            f"Distância euclidiana ponderada em z-scores do pool {dest_league} "
-            "(maior peso em impact p90, PHI p90 e ΔxT p90)."
+            f"Distância euclidiana ponderada em z-scores do pool {similar_league_label}."
         )
         results_c = sim.find_similar_option_c(target, pool, top_k=top_k)
-        if not results_c:
-            st.info("Nenhum similar encontrado.")
-        else:
-            st.dataframe(_results_df(results_c), use_container_width=True, hide_index=True)
-            with st.expander("Métricas usadas (Opção C)"):
-                st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
+        _render_similarity_results_tab(
+            results=results_c,
+            target=target,
+            target_passes=target_passes,
+            pool_passes=pool_passes,
+            target_league=target_league_label,
+            similar_league=similar_league_label,
+            pick_key=f"sim_{prefix}_pick_c",
+            include_origin=False,
+        )
+        with st.expander("Métricas usadas (Opção C)"):
+            st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
 
     with tab_origin:
         st.caption(
-            "Similaridade da região de origem dos passes completos: grid 12×8, "
-            "proporção por zona e distância por cosseno entre perfis."
+            "Similaridade da região de origem dos passes completos (grid 12×8, cosseno)."
         )
-        target_profile = sim.pass_origin_profile(target_passes)
-        if target_profile is None:
-            st.warning(
-                "Sem passes completos suficientes para montar o perfil de origem deste jogador."
-            )
+        if sim.pass_origin_profile(target_passes) is None:
+            st.warning("Sem passes completos suficientes para perfil de origem do jogador selecionado.")
             return
-
         if not pool_passes:
             st.warning("Passes do pool indisponíveis para comparação espacial.")
             return
-
         results_origin = sim.find_similar_option_origin(
             target_passes,
             pool,
             pool_passes,
             top_k=top_k,
         )
-        if not results_origin:
-            st.info("Nenhum similar por origem de passe encontrado no pool.")
-        else:
-            st.dataframe(
-                _results_df(results_origin, include_origin=True),
-                use_container_width=True,
-                hide_index=True,
+        _render_similarity_results_tab(
+            results=results_origin,
+            target=target,
+            target_passes=target_passes,
+            pool_passes=pool_passes,
+            target_league=target_league_label,
+            similar_league=similar_league_label,
+            pick_key=f"sim_{prefix}_pick_origin",
+            include_origin=True,
+        )
+        with st.expander("Como interpretar origem dominante"):
+            st.markdown(
+                "- **defesa (área)**: passes saindo da área própria\n"
+                "- **saída de bola**: entre área e meio defensivo\n"
+                "- **meio-campo** / **terço final**: origem mais avançada"
             )
-            with st.expander("Como interpretar"):
-                st.markdown(
-                    "- **defesa (área)**: maior parte dos passes sai de dentro ou na entrada da área própria\n"
-                    "- **saída de bola**: origem predominante entre a área e o meio defensivo\n"
-                    "- **meio-campo** / **terço final**: origem mais avançada no campo\n"
-                    "- Esquerda / centro / direita: corredor lateral do campo (vista de cima)"
-                )
 
 
 def main() -> None:
@@ -1005,13 +1087,21 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_dashboard, tab_similarity = st.tabs(["Dashboard", "Similaridade"])
+    tab_dashboard, tab_sim_ba, tab_sim_ab = st.tabs(
+        ["Dashboard", "Similaridade B->A", "Similaridade A->B"]
+    )
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
         st.divider()
         render_rating_section(rated, selected_player_id=selected_player_id)
-    with tab_similarity:
-        render_similarity_section(all_players, passes_by_player, serie_a_passes)
+    with tab_sim_ba:
+        render_similarity_section(
+            all_players, passes_by_player, serie_a_passes, sb_to_sa=True
+        )
+    with tab_sim_ab:
+        render_similarity_section(
+            all_players, passes_by_player, serie_a_passes, sb_to_sa=False
+        )
 
 
 if __name__ == "__main__":

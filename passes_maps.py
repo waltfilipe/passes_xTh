@@ -246,11 +246,15 @@ def draw_pass_origin_heatmap(
     match_label: str = "todos os jogos",
     *,
     mini: bool = False,
+    tiny: bool = False,
 ):
     """12×8 heatmap of completed pass start locations (origin)."""
-    if mini:
-        figsize = (3.8, 2.5)
-        dpi = 150
+    if tiny:
+        figsize = (2.2, 1.45)
+        dpi = 120
+    elif mini:
+        figsize = (2.6, 1.7)
+        dpi = 130
     else:
         figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
         dpi = FIG_DPI_COMPACT
@@ -298,19 +302,20 @@ def draw_pass_origin_heatmap(
             )
 
     pitch.draw(ax=ax)
-    if not mini:
+    if not mini and not tiny:
         sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
         cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
         cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
         cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
         plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
         cbar.set_label("Passes completos", color="#c7cdda", fontsize=7 * scale)
-    title_size = 7.0 * scale if mini else 8.2 * scale
+    title_size = 6.2 * scale if tiny else (7.0 * scale if mini else 8.2 * scale)
+    short_name = player_name.split()[0] if tiny and player_name else player_name
     ax.set_title(
-        f"{player_name}\nOrigem · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
-        color="white", fontsize=title_size, pad=4 if mini else 5,
+        f"{short_name}\nOrigem · {match_label}" if tiny else f"{player_name}\nOrigem · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
+        color="white", fontsize=title_size, pad=2 if tiny else (4 if mini else 5),
     )
-    if not mini:
+    if not mini and not tiny:
         _attack_arrow(fig, fig_w=fig_w)
     return fig
 
