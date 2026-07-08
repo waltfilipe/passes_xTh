@@ -768,6 +768,10 @@ def _render_similarity_player_panel(
         m1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
         m2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
         m3.metric("Impact p90", fmt_stat_value("impact_passes_p90", player.get("impact_passes_p90")))
+    else:
+        g1, g2 = st.columns(2)
+        g1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
+        g2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
 
     profile = sim.pass_origin_profile(passes) if passes is not None else None
     if profile is not None:
@@ -793,9 +797,13 @@ def _similarity_results_df(
     *,
     include_origin: bool = False,
     origin_dual: bool = False,
+    origin_column: bool = False,
 ):
     import pandas as pd
 
+    origin_col_label = (
+        f"Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})"
+    )
     rows = []
     for rank, row in enumerate(results, start=1):
         entry = {
@@ -814,6 +822,11 @@ def _similarity_results_df(
             entry["Origem dominante"] = row.get("origin_dominant", "—")
         else:
             entry["Similaridade"] = f"{row.get('similarity_pct', 0):.1f}%"
+            if origin_column:
+                origin_val = row.get("origin_similarity_pct")
+                entry[origin_col_label] = (
+                    f"{float(origin_val):.1f}%" if origin_val is not None else "—"
+                )
             entry["Impact p90"] = fmt_stat_value("impact_passes_p90", row.get("impact_passes_p90"))
             entry["PHI p90"] = fmt_stat_value("phi_p90", row.get("phi_p90"))
             entry["ΔxT p90"] = fmt_stat_value("dxt_p90", row.get("dxt_p90"))
@@ -834,6 +847,7 @@ def _render_similarity_results_tab(
     pick_key: str,
     include_origin: bool = False,
     origin_dual: bool = False,
+    origin_column: bool = False,
 ) -> None:
     import pandas as pd
 
@@ -841,7 +855,12 @@ def _render_similarity_results_tab(
         st.info("Nenhum similar encontrado.")
         return
 
-    df = _similarity_results_df(results, include_origin=include_origin, origin_dual=origin_dual)
+    df = _similarity_results_df(
+        results,
+        include_origin=include_origin,
+        origin_dual=origin_dual,
+        origin_column=origin_column,
+    )
     display_df = df.drop(columns=["_player_id"])
     pick = st.dataframe(
         display_df,
@@ -906,7 +925,8 @@ def _render_similarity_results_tab(
         )
         if similar.get("origin_similarity_pct") is not None:
             st.caption(
-                f"Similaridade de origem: {float(similar['origin_similarity_pct']):.1f}%"
+                f"Similaridade de origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS}): "
+                f"{float(similar['origin_similarity_pct']):.1f}%"
             )
 
     compare_rows = []
@@ -1054,9 +1074,16 @@ def render_similarity_section(
 
     with tab_c:
         st.caption(
-            f"Distância euclidiana ponderada em z-scores do pool {similar_league_label}."
+            f"Distância euclidiana ponderada em z-scores do pool {similar_league_label}. "
+            f"A coluna **Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})** "
+            "é informativa (cosseno entre mapas de origem) e não altera o ranking."
         )
         results_c = sim.find_similar_option_c(target, pool, top_k=top_k)
+        results_c = sim.attach_pass_origin_similarity(
+            results_c,
+            target_passes,
+            pool_passes,
+        )
         _render_similarity_results_tab(
             results=results_c,
             target=target,
@@ -1068,6 +1095,7 @@ def render_similarity_section(
             similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
             pick_key=f"sim_{prefix}_pick_c",
             include_origin=False,
+            origin_column=True,
         )
         with st.expander("Métricas usadas (Opção C)"):
             st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))

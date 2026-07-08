@@ -19,6 +19,8 @@ FIELD_X = 120.0
 FIELD_Y = 80.0
 ORIGIN_GRID_COLS = 8
 ORIGIN_GRID_ROWS = 6
+ORIGIN_ANALYSIS_COLS = 12
+ORIGIN_ANALYSIS_ROWS = 8
 MIN_PASSES_ORIGIN = 50
 ORIGIN_PREFILTER_TOP_N = 50
 
@@ -352,6 +354,36 @@ def find_similar_option_a(
         })
     results.sort(key=lambda r: (-r["similarity_pct"], r["distance"]))
     return results[:top_k]
+
+
+def attach_pass_origin_similarity(
+    results: list[dict],
+    target_passes: pd.DataFrame | None,
+    passes_by_id: dict[str, pd.DataFrame],
+    *,
+    cols: int = ORIGIN_ANALYSIS_COLS,
+    rows: int = ORIGIN_ANALYSIS_ROWS,
+    min_passes: int = MIN_PASSES_ORIGIN,
+) -> list[dict[str, Any]]:
+    """Annotate z-score (or other) results with pass-origin cosine similarity (12×8 default)."""
+    target_profile = pass_origin_profile(target_passes, cols=cols, rows=rows)
+    if target_profile is None:
+        return [{**row, "origin_similarity_pct": None} for row in results]
+
+    enriched: list[dict[str, Any]] = []
+    for row in results:
+        pid = str(row["player_id"])
+        passes = passes_by_id.get(pid)
+        if _completed_pass_count(passes) < min_passes:
+            enriched.append({**row, "origin_similarity_pct": None})
+            continue
+        profile = pass_origin_profile(passes, cols=cols, rows=rows)
+        if profile is None:
+            enriched.append({**row, "origin_similarity_pct": None})
+            continue
+        origin_sim = _cosine_similarity_pct(target_profile, profile)
+        enriched.append({**row, "origin_similarity_pct": round(origin_sim, 1)})
+    return enriched
 
 
 def find_similar_option_c(
