@@ -245,10 +245,14 @@ def draw_pass_origin_heatmap(
     player_name: str,
     match_label: str = "todos os jogos",
     *,
+    cols: int = 8,
+    rows: int = 6,
     mini: bool = False,
     tiny: bool = False,
 ):
-    """12×8 heatmap of completed pass start locations (origin)."""
+    """Heatmap of completed pass start locations (origin)."""
+    cols = max(int(cols), 1)
+    rows = max(int(rows), 1)
     if tiny:
         figsize = (2.2, 1.45)
         dpi = 120
@@ -264,20 +268,20 @@ def draw_pass_origin_heatmap(
     completed = passes[passes["is_won"].astype(bool)].copy() if passes is not None else passes
     fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
 
-    x_bins = np.linspace(0.0, FIELD_X, PASS_DEST_HEATMAP_COLS + 1)
-    y_bins = np.linspace(0.0, FIELD_Y, PASS_DEST_HEATMAP_ROWS + 1)
-    grid = np.zeros((PASS_DEST_HEATMAP_ROWS, PASS_DEST_HEATMAP_COLS), dtype=float)
+    x_bins = np.linspace(0.0, FIELD_X, cols + 1)
+    y_bins = np.linspace(0.0, FIELD_Y, rows + 1)
+    grid = np.zeros((rows, cols), dtype=float)
 
     if completed is not None and not completed.empty:
         x_idx = np.clip(
             np.digitize(completed["x_start"].to_numpy(), x_bins, right=True) - 1,
             0,
-            PASS_DEST_HEATMAP_COLS - 1,
+            cols - 1,
         )
         y_idx = np.clip(
             np.digitize(completed["y_start"].to_numpy(), y_bins, right=True) - 1,
             0,
-            PASS_DEST_HEATMAP_ROWS - 1,
+            rows - 1,
         )
         for ix, iy in zip(x_idx, y_idx):
             grid[iy, ix] += 1.0
@@ -285,8 +289,8 @@ def draw_pass_origin_heatmap(
     vmax = max(float(grid.max()), 1.0)
     norm = Normalize(vmin=0.0, vmax=vmax)
 
-    for iy in range(PASS_DEST_HEATMAP_ROWS):
-        for ix in range(PASS_DEST_HEATMAP_COLS):
+    for iy in range(rows):
+        for ix in range(cols):
             value = float(grid[iy, ix])
             x0, x1 = x_bins[ix], x_bins[ix + 1]
             y0, y1 = y_bins[iy], y_bins[iy + 1]
@@ -312,7 +316,7 @@ def draw_pass_origin_heatmap(
     title_size = 6.2 * scale if tiny else (7.0 * scale if mini else 8.2 * scale)
     short_name = player_name.split()[0] if tiny and player_name else player_name
     ax.set_title(
-        f"{short_name}\nOrigem · {match_label}" if tiny else f"{player_name}\nOrigem · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
+        f"{short_name}\nOrigem · {match_label}" if tiny else f"{player_name}\nOrigem · {cols}×{rows} · {match_label}",
         color="white", fontsize=title_size, pad=2 if tiny else (4 if mini else 5),
     )
     if not mini and not tiny:

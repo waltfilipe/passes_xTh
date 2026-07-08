@@ -17,8 +17,8 @@ POSITION_GROUPS_ORDER = (
 
 FIELD_X = 120.0
 FIELD_Y = 80.0
-ORIGIN_GRID_COLS = 12
-ORIGIN_GRID_ROWS = 8
+ORIGIN_GRID_COLS = 8
+ORIGIN_GRID_ROWS = 6
 MIN_PASSES_ORIGIN = 50
 ORIGIN_PREFILTER_TOP_N = 50
 
@@ -91,6 +91,38 @@ def _percentile_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFram
     return df.rank(pct=True, method="average") * 100.0
 
 
+def position_pool_percentiles(
+    player: dict,
+    players_by_position: dict[str, list[dict]],
+    keys: tuple[str, ...] | None = None,
+) -> dict[str, float]:
+    """Percentile rank of each metric within the player's detailed position pool."""
+    metric_keys = keys or SIMILARITY_METRICS_A
+    pos = player_search_position(player)
+    if not pos:
+        return {}
+    pool = players_by_position.get(pos, [])
+    if not pool:
+        return {}
+    raw = _metric_table(pool, metric_keys)
+    pct = _percentile_table(pool, metric_keys)
+    pid = str(player["player_id"])
+    if pid in pct.index:
+        return {k: float(pct.loc[pid, k]) for k in metric_keys}
+    out: dict[str, float] = {}
+    for k in metric_keys:
+        val = float(player.get(k) or 0.0)
+        col = raw[k]
+        out[k] = float((col < val).mean() * 100.0) if len(col) else 50.0
+    return out
+
+
+def fmt_percentile_value(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{float(value):.0f}%"
+
+
 def _zscore_table(players: list[dict], keys: tuple[str, ...]) -> pd.DataFrame:
     df = _metric_table(players, keys)
     mean = df.mean()
@@ -111,7 +143,7 @@ def pass_origin_profile(
     rows: int = ORIGIN_GRID_ROWS,
     completed_only: bool = True,
 ) -> np.ndarray | None:
-    """Normalized 12×8 histogram of pass start locations (StatsBomb coords)."""
+    """Normalized histogram of pass start locations (StatsBomb coords)."""
     if passes is None or passes.empty:
         return None
     work = passes

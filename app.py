@@ -60,6 +60,14 @@ RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 SIMILARITY_TOP_K = 10
+SIMILARITY_COMPARE_METRICS: tuple[tuple[str, str], ...] = (
+    ("Impact p90", "impact_passes_p90"),
+    ("PHI p90", "phi_p90"),
+    ("ΔxT / pass", "dxt_per_pass"),
+    ("Prog. p90", "progressive_passes_p90"),
+    ("Passes", "passes_completed"),
+    ("Minutos", "minutes"),
+)
 SIMILARITY_SELECT_SB_KEY = "similarity_player_select_sb"
 SIMILARITY_SELECT_SA_KEY = "similarity_player_select_sa"
 FIXED_CLASSIFICATION_MODEL = CLASSIFICATION_MODEL_DEFAULT
@@ -752,20 +760,28 @@ def _render_similarity_player_panel(
     *,
     league: str,
     similarity_pct: float | None = None,
+    comparison_mode: bool = False,
+    percentiles: dict[str, float] | None = None,
 ) -> None:
     header = (
         f"**{html.escape(str(player.get('player_name', '—')))}** · "
         f"{html.escape(str(player.get('team', '—')))} · "
-        f"{html.escape(str(player.get('position', '—')))} · {html.escape(league)}"
+        f"{html.escape(str(player.get('position', '—')))}"
     )
     if similarity_pct is not None:
-        header += f" · similaridade **{similarity_pct:.1f}%**"
+        header += f" · sim. **{similarity_pct:.1f}%**"
     st.markdown(header, unsafe_allow_html=True)
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
-    m2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
-    m3.metric("Impact p90", fmt_stat_value("impact_passes_p90", player.get("impact_passes_p90")))
+    if comparison_mode and percentiles:
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Min. (pctl)", sim.fmt_percentile_value(percentiles.get("minutes")))
+        p2.metric("Passes (pctl)", sim.fmt_percentile_value(percentiles.get("passes_completed")))
+        p3.metric("Impact (pctl)", sim.fmt_percentile_value(percentiles.get("impact_passes_p90")))
+    elif not comparison_mode:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Minutos", fmt_stat_value("minutes", player.get("minutes")))
+        m2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
+        m3.metric("Impact p90", fmt_stat_value("impact_passes_p90", player.get("impact_passes_p90")))
 
     profile = sim.pass_origin_profile(passes) if passes is not None else None
     if profile is not None:
@@ -776,9 +792,11 @@ def _render_similarity_player_panel(
             passes,
             str(player.get("player_name", "—")),
             str(player.get("team", "—")),
+            cols=sim.ORIGIN_GRID_COLS,
+            rows=sim.ORIGIN_GRID_ROWS,
             tiny=True,
         )
-        st.pyplot(fig, clear_figure=True, use_container_width=False)
+        st.pyplot(fig, clear_figure=True, use_container_width=True)
     else:
         st.caption("Sem passes para heatmap de origem.")
 
@@ -827,6 +845,8 @@ def _render_similarity_results_tab(
     pool_passes: dict,
     target_league: str,
     similar_league: str,
+    target_pool_by_pos: dict[str, list[dict]],
+    similar_pool_by_pos: dict[str, list[dict]],
     pick_key: str,
     include_origin: bool = False,
     origin_dual: bool = False,
@@ -868,38 +888,50 @@ def _render_similarity_results_tab(
     similar_id = str(similar.get("player_id", ""))
     similar_passes = pool_passes.get(similar_id)
 
+    compare_keys = tuple(key for _, key in SIMILARITY_COMPARE_METRICS)
+    target_pct = sim.position_pool_percentiles(target, target_pool_by_pos, keys=compare_keys)
+    similar_pct = sim.position_pool_percentiles(similar, similar_pool_by_pos, keys=compare_keys)
+    target_pos = sim.player_search_position(target) or "—"
+    similar_pos = sim.player_search_position(similar) or "—"
+
     st.markdown("#### Comparação")
-    col_target, col_similar = st.columns(2, gap="medium")
+    st.caption(
+        f"Percentis calculados dentro da posição detalhada em cada liga "
+        f"({html.escape(target_pos)} em {html.escape(target_league)} · "
+        f"{html.escape(similar_pos)} em {html.escape(similar_league)})."
+    )
+
+    col_target, col_similar = st.columns(2, gap="small")
     with col_target:
-        st.markdown(f"**Referência ({target_league})**")
-        _render_similarity_player_panel(target, target_passes, league=target_league)
+        st.markdown(f"**Referência · {html.escape(target_league)}**", unsafe_allow_html=True)
+        _render_similarity_player_panel(
+            target,
+            target_passes,
+            league=target_league,
+            comparison_mode=True,
+            percentiles=target_pct,
+        )
     with col_similar:
-        st.markdown(f"**Similar ({similar_league})**")
+        st.markdown(f"**Similar · {html.escape(similar_league)}**", unsafe_allow_html=True)
         _render_similarity_player_panel(
             similar,
             similar_passes,
             league=similar_league,
             similarity_pct=float(similar.get("similarity_pct") or 0),
+            comparison_mode=True,
+            percentiles=similar_pct,
         )
         if similar.get("origin_similarity_pct") is not None:
             st.caption(
                 f"Similaridade de origem: {float(similar['origin_similarity_pct']):.1f}%"
             )
 
-    compare_metrics = [
-        ("Impact p90", "impact_passes_p90"),
-        ("PHI p90", "phi_p90"),
-        ("ΔxT / pass", "dxt_per_pass"),
-        ("Prog. p90", "progressive_passes_p90"),
-        ("Passes", "passes_completed"),
-        ("Minutos", "minutes"),
-    ]
     compare_rows = []
-    for label, key in compare_metrics:
+    for label, key in SIMILARITY_COMPARE_METRICS:
         compare_rows.append({
             "Métrica": label,
-            target_league: fmt_stat_value(key, target.get(key)),
-            similar_league: fmt_stat_value(key, similar.get(key)),
+            f"Referência ({target_league})": sim.fmt_percentile_value(target_pct.get(key)),
+            f"Similar ({similar_league})": sim.fmt_percentile_value(similar_pct.get(key)),
         })
     st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
 
@@ -1027,6 +1059,8 @@ def render_similarity_section(
             pool_passes=pool_passes,
             target_league=target_league_label,
             similar_league=similar_league_label,
+            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
+            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
             pick_key=f"sim_{prefix}_pick_a",
             include_origin=False,
         )
@@ -1045,6 +1079,8 @@ def render_similarity_section(
             pool_passes=pool_passes,
             target_league=target_league_label,
             similar_league=similar_league_label,
+            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
+            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
             pick_key=f"sim_{prefix}_pick_c",
             include_origin=False,
         )
@@ -1078,12 +1114,15 @@ def render_similarity_section(
             pool_passes=pool_passes,
             target_league=target_league_label,
             similar_league=similar_league_label,
+            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
+            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
             pick_key=f"sim_{prefix}_pick_origin",
             origin_dual=True,
         )
         with st.expander("Como interpretar"):
             st.markdown(
-                "- **Sim. origem**: cosseno entre mapas 12×8 de onde os passes completos começam\n"
+                f"- **Sim. origem**: cosseno entre mapas {sim.ORIGIN_GRID_COLS}×{sim.ORIGIN_GRID_ROWS} "
+                "de onde os passes completos começam\n"
                 "- **Sim. métricas**: percentil das métricas (Opção A) só entre os candidatos de origem parecida\n"
                 "- **Origem dominante**: zona com maior % de passes daquele jogador"
             )
