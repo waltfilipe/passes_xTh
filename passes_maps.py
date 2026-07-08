@@ -12,8 +12,6 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch, Rectangle
 from mplsoccer import Pitch
 
-import passes_engine as pe
-
 FIG_W, FIG_H = 7.2, 4.8
 FIG_DPI = 220
 FIG_W_COMPACT, FIG_H_COMPACT = 6.8, 4.5
@@ -239,6 +237,8 @@ def draw_xt_surface_heatmap(
     compact: bool = False,
 ):
     """Heatmap of the xT v4 surface with quadrant mean values annotated."""
+    import passes_engine as pe
+
     cols = max(int(cols), 1)
     rows = max(int(rows), 1)
     if compact:

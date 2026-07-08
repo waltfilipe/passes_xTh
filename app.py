@@ -29,11 +29,12 @@ from comparison_config import (
     normalize_classification_model,
     normalize_tier_model,
 )
-from passes_maps import (
-    draw_impact_pass_map,
-    draw_pass_destination_heatmap,
-    draw_xt_surface_heatmap,
-)
+from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
+
+try:
+    from passes_maps import draw_xt_surface_heatmap
+except ImportError:
+    draw_xt_surface_heatmap = None
 
 DATA_CACHE_VERSION = pe.DATA_CACHE_VERSION
 LONG_BALL_STAT_KEYS = pe.LONG_BALL_STAT_KEYS
@@ -53,7 +54,7 @@ compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
 fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
-get_xt_quadrant_grid = pe.get_xt_quadrant_grid
+get_xt_quadrant_grid = getattr(pe, "get_xt_quadrant_grid", None)
 load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
 rank_to_display_score = pe.rank_to_display_score
@@ -294,6 +295,8 @@ def load_passes(
 
 @st.cache_data(show_spinner=False)
 def load_xt_grid(cols: int, rows: int):
+    if get_xt_quadrant_grid is None:
+        return None
     return get_xt_quadrant_grid(cols, rows)
 
 
@@ -885,6 +888,12 @@ def render_model_selectors() -> tuple[str, str]:
 
 def render_xt_surface_section() -> None:
     st.subheader("Mapa de calor — superfície xT v4")
+    if draw_xt_surface_heatmap is None or get_xt_quadrant_grid is None:
+        st.warning(
+            "O mapa xT precisa da versão mais recente de passes_engine.py e passes_maps.py. "
+            "Reimplante o app no Streamlit Cloud (ou reinicie o serviço) para carregar o commit mais recente."
+        )
+        return
     st.caption(
         "Valores por quadrante = média da superfície xT usada no engine (heurística v3.1 + bônus Markov). "
         "Útil para entender por que passes geometricamente próximos ao gol podem ter ΔxT diferente."
@@ -902,6 +911,9 @@ def render_xt_surface_section() -> None:
     )
     cols, rows = grid_options[grid_label]
     grid = load_xt_grid(cols, rows)
+    if grid is None:
+        st.warning("Não foi possível carregar a grade xT neste deploy.")
+        return
 
     stat_cols = st.columns(4)
     stat_cols[0].metric("xT mínimo", f"{float(grid.min()):.3f}")
