@@ -52,6 +52,32 @@ TIER_MODEL_PERCENTILES: dict[str, tuple[int, int]] = {
     TIER_MODEL_PERCENTILE_P70_P90: (70, 90),
 }
 
+# Slicer 3 — superfície xT (mapa vs passes).
+XT_SURFACE_MODE_ATUAL = "atual"
+XT_SURFACE_MODE_ALIGNED = "aligned_display"
+XT_SURFACE_MODE_MONOTONIC = "monotonic_fine"
+
+XT_SURFACE_MODE_LABELS: dict[str, str] = {
+    XT_SURFACE_MODE_ATUAL: "Atual (mapa ≠ passes)",
+    XT_SURFACE_MODE_ALIGNED: "Opção 2 — mapa = passes (pós-processo)",
+    XT_SURFACE_MODE_MONOTONIC: "Opção 3 — grid fino monotônico",
+}
+
+XT_SURFACE_MODE_DESCRIPTIONS: dict[str, str] = {
+    XT_SURFACE_MODE_ATUAL: (
+        "Mapa com pós-processamento e boosts; passes usam o grid fino bruto "
+        "(comportamento atual — pode divergir do mapa)."
+    ),
+    XT_SURFACE_MODE_ALIGNED: (
+        "Passes interpolam a mesma superfície do mapa 16×12 (pós-processo, "
+        "simetria e boosts), upsampled para o campo."
+    ),
+    XT_SURFACE_MODE_MONOTONIC: (
+        "Grid fino com xT monotônico no último terço (x≥80); mapa mostra médias "
+        "por quadrante sem pós-processamento de escada."
+    ),
+}
+
 # Backward-compatible aliases (tier model only).
 IMPACT_MODEL_DEFAULT = TIER_MODEL_DEFAULT
 IMPACT_MODEL_FIXED_30_50 = TIER_MODEL_FIXED_30_50
@@ -73,3 +99,8 @@ def normalize_tier_model(model: str | None) -> str:
 def normalize_impact_model(model: str | None) -> str:
     """Alias for normalize_tier_model (legacy imports)."""
     return normalize_tier_model(model)
+
+
+def normalize_xt_surface_mode(mode: str | None) -> str:
+    key = str(mode or XT_SURFACE_MODE_ATUAL).strip().lower()
+    return key if key in XT_SURFACE_MODE_LABELS else XT_SURFACE_MODE_ATUAL

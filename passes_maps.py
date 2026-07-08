@@ -245,6 +245,7 @@ def draw_xt_surface_heatmap(
     cols: int = XT_HEATMAP_COLS_DEFAULT,
     rows: int = XT_HEATMAP_ROWS_DEFAULT,
     compact: bool = False,
+    xt_surface_mode: str = "atual",
 ):
     """16×12 xT grid — same layout and labels as wc-playeranalysis draw_xt_grid_map."""
     import passes_engine as pe
@@ -262,8 +263,8 @@ def draw_xt_surface_heatmap(
         fig_w = XT_MAP_FIG_W
         scale = fig_w / XT_MAP_REF_WIDTH
 
-    meta = pe.get_xt_surface_meta()
-    grid = pe.get_xt_quadrant_grid(cols, rows)
+    meta = pe.get_xt_surface_meta(xt_surface_mode)
+    grid = pe.get_xt_quadrant_grid(cols, rows, xt_surface_mode=xt_surface_mode)
     model_label = meta.get("model_label", "Heurístico v4 — Top 5 (último terço)")
 
     pitch = Pitch(pitch_type="statsbomb", pitch_color="#1a1a2e", line_color="#ffffff", line_alpha=0.95)

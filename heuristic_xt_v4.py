@@ -15,6 +15,10 @@ from heuristic_scoring import xt_bilinear_batch
 
 XT_MODEL_LABEL = "Heurístico v4 · Top5 (último terço)"
 
+XT_SURFACE_MODE_ATUAL = "atual"
+XT_SURFACE_MODE_ALIGNED = "aligned_display"
+XT_SURFACE_MODE_MONOTONIC = "monotonic_fine"
+
 FIELD_X, FIELD_Y = 120.0, 80.0
 HALF_LINE_X = FIELD_X / 2.0
 FINAL_THIRD_LINE_X = 80.0
@@ -256,7 +260,7 @@ def zone_xt_means(grid: np.ndarray, n_x: int, n_y: int) -> np.ndarray:
 
 
 @functools.lru_cache(maxsize=1)
-def compute_heuristic_v4_fine_grid(
+def _raw_fine_grid(
     nx: int = XT_V3_FINE_NX,
     ny: int = XT_V3_FINE_NY,
 ) -> np.ndarray:
@@ -267,17 +271,130 @@ def compute_heuristic_v4_fine_grid(
     return _symmetrize_pitch_width(surface)
 
 
-def compute_heuristic_v4_xt_grid(
-    n_x: int = NX_XT_DISPLAY,
-    n_y: int = NY_XT_DISPLAY,
+def _enforce_monotonic_toward_goal(grid: np.ndarray) -> np.ndarray:
+    """Garante xT não decresce em x no último terço (x ≥ 80)."""
+    ny, nx = grid.shape
+    x_coords = np.linspace(0.0, FIELD_X, nx)
+    out = grid.copy()
+    for iy in range(ny):
+        row = out[iy].copy()
+        for ix in range(1, nx):
+            if x_coords[ix] >= FINAL_THIRD_LINE_X:
+                row[ix] = max(row[ix], row[ix - 1])
+        out[iy] = np.clip(row, 0.0, XT_V4_SURFACE_MAX)
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def compute_heuristic_v4_fine_grid(
+    nx: int = XT_V3_FINE_NX,
+    ny: int = XT_V3_FINE_NY,
 ) -> np.ndarray:
-    return quadrant_xt_grid(n_x, n_y)
+    return _raw_fine_grid(nx, ny)
+
+
+@functools.lru_cache(maxsize=1)
+def compute_heuristic_v4_fine_grid_monotonic(
+    nx: int = XT_V3_FINE_NX,
+    ny: int = XT_V3_FINE_NY,
+) -> np.ndarray:
+    return _enforce_monotonic_toward_goal(_raw_fine_grid(nx, ny))
+
+
+def _post_process_for_resolution(grid: np.ndarray) -> np.ndarray:
+    """Pós-processamento de escada; escala att_col_start à resolução do grid."""
+    cols = grid.shape[1]
+    att_start = max(1, int(round(XT_V31_ATT_COL_START / NX_XT_DISPLAY * cols)))
+    smoothed = np.array([
+        _smooth_columns_1d(grid[iy], XT_V31_COL_SMOOTH_KERNEL)
+        for iy in range(grid.shape[0])
+    ])
+    return _limit_adjacent_column_step(
+        smoothed,
+        XT_V31_MAX_COL_STEP_DEF,
+        att_col_start=att_start,
+        max_step_att=XT_V31_MAX_COL_STEP_ATT,
+    )
+
+
+def _display_quadrant_grid_from_fine(
+    fine: np.ndarray,
+    cols: int,
+    rows: int,
+    *,
+    post_process: bool,
+    apply_boosts: bool,
+) -> np.ndarray:
+    cols = max(int(cols), 1)
+    rows = max(int(rows), 1)
+    zones = zone_xt_means(fine, cols, rows)
+    if post_process:
+        zones = _post_process_for_resolution(zones)
+    zones = _symmetrize_pitch_width(zones)
+    if apply_boosts:
+        zones = _apply_xt_map_zone_boosts(zones)
+    return zones
+
+
+def _upsample_zone_grid_to_fine(zone_grid: np.ndarray) -> np.ndarray:
+    """Interpola um grid de zonas para a resolução fina 96×64."""
+    n_y, n_x = zone_grid.shape
+    x_coords = np.linspace(0.0, FIELD_X, n_x)
+    y_coords = np.linspace(0.0, FIELD_Y, n_y)
+    interp = RegularGridInterpolator(
+        (y_coords, x_coords),
+        zone_grid,
+        bounds_error=False,
+        fill_value=None,
+    )
+    xe = np.linspace(0.0, FIELD_X, XT_V3_FINE_NX)
+    ye = np.linspace(0.0, FIELD_Y, XT_V3_FINE_NY)
+    xc, yc = np.meshgrid(xe, ye)
+    pts = np.column_stack([yc.ravel(), xc.ravel()])
+    out = interp(pts).reshape(XT_V3_FINE_NY, XT_V3_FINE_NX)
+    return np.clip(out, 0.0, XT_V4_SURFACE_MAX)
+
+
+@functools.lru_cache(maxsize=1)
+def compute_scoring_grid_aligned_fine() -> np.ndarray:
+    """Grid fino derivado do mapa 16×12 pós-processado (opção 2)."""
+    display = _display_quadrant_grid_from_fine(
+        _raw_fine_grid(),
+        NX_XT_DISPLAY,
+        NY_XT_DISPLAY,
+        post_process=True,
+        apply_boosts=True,
+    )
+    return _upsample_zone_grid_to_fine(display)
+
+
+def normalize_xt_surface_mode(mode: str | None) -> str:
+    key = str(mode or XT_SURFACE_MODE_ATUAL).strip().lower()
+    valid = {XT_SURFACE_MODE_ATUAL, XT_SURFACE_MODE_ALIGNED, XT_SURFACE_MODE_MONOTONIC}
+    return key if key in valid else XT_SURFACE_MODE_ATUAL
+
+
+def _scoring_grid_for_mode(mode: str) -> np.ndarray:
+    mode = normalize_xt_surface_mode(mode)
+    if mode == XT_SURFACE_MODE_ALIGNED:
+        return compute_scoring_grid_aligned_fine()
+    if mode == XT_SURFACE_MODE_MONOTONIC:
+        return compute_heuristic_v4_fine_grid_monotonic()
+    return compute_heuristic_v4_fine_grid()
+
+
+def interp_xt_batch_for_mode(
+    x: np.ndarray,
+    y: np.ndarray,
+    mode: str = XT_SURFACE_MODE_ATUAL,
+) -> np.ndarray:
+    fine = _scoring_grid_for_mode(mode)
+    return xt_bilinear_batch(np.asarray(x, dtype=float), np.asarray(y, dtype=float), fine)
 
 
 def interp_xt_batch(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Bilinear xT lookup on the v4 fine grid (pass scoring)."""
-    fine = compute_heuristic_v4_fine_grid()
-    return xt_bilinear_batch(np.asarray(x, dtype=float), np.asarray(y, dtype=float), fine)
+    """Bilinear xT lookup on the v4 fine grid (modo atual / legado)."""
+    return interp_xt_batch_for_mode(x, y, XT_SURFACE_MODE_ATUAL)
 
 
 def _short_pass_multiplier_vec(dist: np.ndarray) -> np.ndarray:
@@ -363,19 +480,48 @@ def _apply_xt_map_zone_boosts(grid: np.ndarray) -> np.ndarray:
     return out
 
 
+@functools.lru_cache(maxsize=24)
+def quadrant_xt_grid_for_mode(
+    cols: int = NX_XT_DISPLAY,
+    rows: int = NY_XT_DISPLAY,
+    mode: str = XT_SURFACE_MODE_ATUAL,
+) -> np.ndarray:
+    mode = normalize_xt_surface_mode(mode)
+    fine = _raw_fine_grid()
+    if mode == XT_SURFACE_MODE_MONOTONIC:
+        fine = _enforce_monotonic_toward_goal(fine)
+        return _display_quadrant_grid_from_fine(
+            fine, cols, rows, post_process=False, apply_boosts=False
+        )
+    if mode == XT_SURFACE_MODE_ALIGNED:
+        return _display_quadrant_grid_from_fine(
+            fine, cols, rows, post_process=True, apply_boosts=True
+        )
+    return _display_quadrant_grid_from_fine(
+        fine, cols, rows, post_process=True, apply_boosts=True
+    )
+
+
+def compute_heuristic_v4_xt_grid(
+    n_x: int = NX_XT_DISPLAY,
+    n_y: int = NY_XT_DISPLAY,
+) -> np.ndarray:
+    return quadrant_xt_grid_for_mode(n_x, n_y, XT_SURFACE_MODE_ATUAL)
+
+
 @functools.lru_cache(maxsize=8)
 def quadrant_xt_grid(cols: int = NX_XT_DISPLAY, rows: int = NY_XT_DISPLAY) -> np.ndarray:
-    """Display-oriented quadrant means (post-processed like wc-playeranalysis maps)."""
-    cols = max(int(cols), 1)
-    rows = max(int(rows), 1)
-    fine = compute_heuristic_v4_fine_grid()
-    zones = zone_xt_means(fine, cols, rows)
-    processed = _heuristic_v4_post_process(zones)
-    symmetrized = _symmetrize_pitch_width(processed)
-    return _apply_xt_map_zone_boosts(symmetrized)
+    """Display-oriented quadrant means (modo atual — legado)."""
+    return quadrant_xt_grid_for_mode(cols, rows, XT_SURFACE_MODE_ATUAL)
 
 
-def surface_meta() -> dict[str, float]:
+def surface_meta(mode: str = XT_SURFACE_MODE_ATUAL) -> dict[str, float | str]:
+    mode = normalize_xt_surface_mode(mode)
+    mode_labels = {
+        XT_SURFACE_MODE_ATUAL: f"{XT_MODEL_LABEL} · atual",
+        XT_SURFACE_MODE_ALIGNED: f"{XT_MODEL_LABEL} · op. 2 (mapa = passes)",
+        XT_SURFACE_MODE_MONOTONIC: f"{XT_MODEL_LABEL} · op. 3 (monotônico)",
+    }
     return {
         "field_x": FIELD_X,
         "field_y": FIELD_Y,
@@ -385,5 +531,6 @@ def surface_meta() -> dict[str, float]:
         "goal_x": GOAL_X,
         "goal_y": GOAL_Y,
         "surface_max": XT_V4_SURFACE_MAX,
-        "model_label": XT_MODEL_LABEL,
+        "model_label": mode_labels.get(mode, XT_MODEL_LABEL),
+        "xt_surface_mode": mode,
     }

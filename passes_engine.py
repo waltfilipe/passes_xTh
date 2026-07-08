@@ -28,6 +28,7 @@ from comparison_config import (
     TIER_MODEL_PERCENTILES,
     normalize_classification_model,
     normalize_tier_model,
+    normalize_xt_surface_mode,
 )
 from heuristic_scoring import POSITION_GROUPS_ORDER, is_outfield_position, position_group
 
@@ -47,7 +48,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 33
+DATA_CACHE_VERSION = 34
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -201,8 +202,12 @@ TOOLTIP_LABELS: dict[str, str] = {
 
 
 # ── xT: Heurístico v4 — Top 5 (último terço) ─────────────────────────────────
-def _interp_xt(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    return hx4.interp_xt_batch(x, y)
+def _interp_xt(
+    x: np.ndarray,
+    y: np.ndarray,
+    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
+) -> np.ndarray:
+    return hx4.interp_xt_batch_for_mode(x, y, xt_surface_mode)
 
 
 def _adjust_delta_v4(
@@ -220,15 +225,21 @@ def _adjust_delta_v4(
     )
 
 
-@functools.lru_cache(maxsize=8)
-def get_xt_quadrant_grid(cols: int = 16, rows: int = 12, samples_per_cell: int = 4) -> np.ndarray:
+@functools.lru_cache(maxsize=24)
+def get_xt_quadrant_grid(
+    cols: int = 16,
+    rows: int = 12,
+    samples_per_cell: int = 4,
+    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
+) -> np.ndarray:
     """Mean xT per pitch quadrant (rows × cols), StatsBomb coordinates."""
-    return hx4.quadrant_xt_grid(cols, rows)
+    _ = samples_per_cell
+    return hx4.quadrant_xt_grid_for_mode(cols, rows, xt_surface_mode)
 
 
-def get_xt_surface_meta() -> dict[str, float]:
+def get_xt_surface_meta(xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL) -> dict:
     """Reference lines and goal position for xT map overlays."""
-    return hx4.surface_meta()
+    return hx4.surface_meta(xt_surface_mode)
 
 
 def _impact_tier_rel_gain_vec(
@@ -607,9 +618,11 @@ def _enrich_passes(
     frame: pd.DataFrame,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
 ) -> pd.DataFrame:
     tier_model = normalize_tier_model(tier_model)
     classification_model = normalize_classification_model(classification_model)
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
     sx, sy = _wyscout_to_sb(frame["start_x"], frame["start_y"])
     has_end = frame["end_x"].notna() & frame["end_y"].notna()
     ex = np.full(len(frame), np.nan)
@@ -643,8 +656,12 @@ def _enrich_passes(
     mask = out["has_end"].to_numpy()
     if mask.any():
         sub = out.loc[mask]
-        xt_start = _interp_xt(sub["x_start"].to_numpy(), sub["y_start"].to_numpy())
-        xt_end = _interp_xt(sub["x_end"].to_numpy(), sub["y_end"].to_numpy())
+        xt_start = _interp_xt(
+            sub["x_start"].to_numpy(), sub["y_start"].to_numpy(), xt_surface_mode
+        )
+        xt_end = _interp_xt(
+            sub["x_end"].to_numpy(), sub["y_end"].to_numpy(), xt_surface_mode
+        )
         delta = _adjust_delta_v4(
             sub["is_won"].to_numpy(),
             xt_start, xt_end,
@@ -1320,11 +1337,13 @@ def load_passes_grouped(
     cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
 ) -> dict[str, pd.DataFrame]:
     """Enriched passes indexed by player_id (for impact maps)."""
     _ = cache_version
     tier_model = normalize_tier_model(tier_model)
     classification_model = normalize_classification_model(classification_model)
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
     frame = _load_season_pass_frame()
     if frame.empty:
         return {}
@@ -1332,6 +1351,7 @@ def load_passes_grouped(
         frame,
         tier_model=tier_model,
         classification_model=classification_model,
+        xt_surface_mode=xt_surface_mode,
     )
     return {str(pid): grp for pid, grp in passes.groupby("player_id", sort=False)}
 
@@ -1340,6 +1360,7 @@ def build_analytics(
     cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = hx4.XT_SURFACE_MODE_ATUAL,
     *,
     impact_model: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
@@ -1349,6 +1370,7 @@ def build_analytics(
         tier_model = normalize_tier_model(impact_model)
     tier_model = normalize_tier_model(tier_model)
     classification_model = normalize_classification_model(classification_model)
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
     frame = _load_season_pass_frame()
     if frame.empty:
         return [], []
@@ -1358,6 +1380,7 @@ def build_analytics(
         frame,
         tier_model=tier_model,
         classification_model=classification_model,
+        xt_surface_mode=xt_surface_mode,
     )
     minutes_info = _load_minutes_info(frame)
 

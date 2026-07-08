@@ -26,8 +26,12 @@ from comparison_config import (
     COMPARISON_PROGRESSION_KEYS,
     TIER_MODEL_DEFAULT,
     TIER_MODEL_LABELS,
+    XT_SURFACE_MODE_ATUAL,
+    XT_SURFACE_MODE_DESCRIPTIONS,
+    XT_SURFACE_MODE_LABELS,
     normalize_classification_model,
     normalize_tier_model,
+    normalize_xt_surface_mode,
 )
 from passes_maps import draw_impact_pass_map, draw_pass_destination_heatmap
 
@@ -48,6 +52,7 @@ RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 CLASSIFICATION_MODEL_SELECT_KEY = "classification_model_select"
 TIER_MODEL_SELECT_KEY = "tier_model_select"
+XT_SURFACE_MODE_SELECT_KEY = "xt_surface_mode_select"
 XT_GRID_SELECT_KEY = "xt_grid_select_v2"
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
@@ -235,15 +240,19 @@ def _call_build_analytics(
     cache_version: int,
     tier_model: str,
     classification_model: str,
+    xt_surface_mode: str,
 ):
     sig = inspect.signature(build_analytics)
     params = sig.parameters
-    if "tier_model" in params and "classification_model" in params:
-        return build_analytics(
-            cache_version,
-            tier_model=tier_model,
-            classification_model=classification_model,
-        )
+    kwargs: dict = {}
+    if "tier_model" in params:
+        kwargs["tier_model"] = tier_model
+    if "classification_model" in params:
+        kwargs["classification_model"] = classification_model
+    if "xt_surface_mode" in params:
+        kwargs["xt_surface_mode"] = xt_surface_mode
+    if kwargs:
+        return build_analytics(cache_version, **kwargs)
     if "impact_model" in params:
         return build_analytics(cache_version, impact_model=tier_model)
     return build_analytics(cache_version)
@@ -253,15 +262,19 @@ def _call_load_passes_grouped(
     cache_version: int,
     tier_model: str,
     classification_model: str,
+    xt_surface_mode: str,
 ):
     sig = inspect.signature(load_passes_grouped)
     params = sig.parameters
-    if "tier_model" in params and "classification_model" in params:
-        return load_passes_grouped(
-            cache_version,
-            tier_model=tier_model,
-            classification_model=classification_model,
-        )
+    kwargs: dict = {}
+    if "tier_model" in params:
+        kwargs["tier_model"] = tier_model
+    if "classification_model" in params:
+        kwargs["classification_model"] = classification_model
+    if "xt_surface_mode" in params:
+        kwargs["xt_surface_mode"] = xt_surface_mode
+    if kwargs:
+        return load_passes_grouped(cache_version, **kwargs)
     if "impact_model" in params:
         return load_passes_grouped(cache_version, impact_model=tier_model)
     return load_passes_grouped(cache_version)
@@ -272,11 +285,13 @@ def load_analytics(
     _cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = XT_SURFACE_MODE_ATUAL,
 ):
     return _call_build_analytics(
         _cache_version,
         normalize_tier_model(tier_model),
         normalize_classification_model(classification_model),
+        normalize_xt_surface_mode(xt_surface_mode),
     )
 
 
@@ -285,19 +300,21 @@ def load_passes(
     _cache_version: int = DATA_CACHE_VERSION,
     tier_model: str = TIER_MODEL_DEFAULT,
     classification_model: str = CLASSIFICATION_MODEL_DEFAULT,
+    xt_surface_mode: str = XT_SURFACE_MODE_ATUAL,
 ):
     return _call_load_passes_grouped(
         _cache_version,
         normalize_tier_model(tier_model),
         normalize_classification_model(classification_model),
+        normalize_xt_surface_mode(xt_surface_mode),
     )
 
 
 @st.cache_data(show_spinner=False)
-def load_xt_grid(cols: int, rows: int):
+def load_xt_grid(cols: int, rows: int, xt_surface_mode: str = XT_SURFACE_MODE_ATUAL):
     if get_xt_quadrant_grid is None:
         return None
-    return get_xt_quadrant_grid(cols, rows)
+    return get_xt_quadrant_grid(cols, rows, xt_surface_mode=normalize_xt_surface_mode(xt_surface_mode))
 
 
 def _norm(s: str) -> str:
@@ -854,8 +871,20 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
-def render_model_selectors() -> tuple[str, str]:
+def render_model_selectors() -> tuple[str, str, str]:
     with st.sidebar:
+        st.markdown("### Superfície xT")
+        xt_surface_mode = st.selectbox(
+            "Mapa / passes",
+            options=list(XT_SURFACE_MODE_LABELS.keys()),
+            format_func=lambda key: XT_SURFACE_MODE_LABELS[key],
+            key=XT_SURFACE_MODE_SELECT_KEY,
+            label_visibility="collapsed",
+            help="\n".join(
+                f"{XT_SURFACE_MODE_LABELS[k]}: {XT_SURFACE_MODE_DESCRIPTIONS[k]}"
+                for k in XT_SURFACE_MODE_LABELS
+            ),
+        )
         st.markdown("### Classificação xT")
         classification_model = st.selectbox(
             "Ajuste por distância",
@@ -883,10 +912,11 @@ def render_model_selectors() -> tuple[str, str]:
                 "Percentil p70/p90: top 30% e top 10% entre passes que avançam com ΔxT > 0."
             ),
         )
-    return classification_model, tier_model
+    return classification_model, tier_model, xt_surface_mode
 
 
-def render_xt_surface_section() -> None:
+def render_xt_surface_section(xt_surface_mode: str) -> None:
+    xt_surface_mode = normalize_xt_surface_mode(xt_surface_mode)
     st.subheader("Mapa xT por quadrante")
     if draw_xt_surface_heatmap is None or get_xt_quadrant_grid is None:
         st.warning(
@@ -894,10 +924,7 @@ def render_xt_surface_section() -> None:
             "Reimplante o app no Streamlit Cloud (ou reinicie o serviço) para carregar o commit mais recente."
         )
         return
-    st.caption(
-        "Grid 16×12 · Heurístico v4 · Top5 (último terço) — v3.1 + bônus Markov Top5 "
-        "quase nulo nos 2/3 defensivos, notável no último terço. Valores por célula em %."
-    )
+    st.caption(XT_SURFACE_MODE_DESCRIPTIONS.get(xt_surface_mode, ""))
 
     grid_options = {
         "16×12 (padrão)": (16, 12),
@@ -911,7 +938,7 @@ def render_xt_surface_section() -> None:
         key=XT_GRID_SELECT_KEY,
     )
     cols, rows = grid_options[grid_label]
-    grid = load_xt_grid(cols, rows)
+    grid = load_xt_grid(cols, rows, xt_surface_mode=xt_surface_mode)
     if grid is None:
         st.warning("Não foi possível carregar a grade xT neste deploy.")
         return
@@ -922,7 +949,7 @@ def render_xt_surface_section() -> None:
     stat_cols[2].metric("xT médio", f"{float(grid.mean()) * 100:.1f}%")
     stat_cols[3].metric("Quadrantes", f"{cols}×{rows}")
 
-    fig = draw_xt_surface_heatmap(cols=cols, rows=rows, compact=False)
+    fig = draw_xt_surface_heatmap(cols=cols, rows=rows, compact=False, xt_surface_mode=xt_surface_mode)
     st.pyplot(fig, clear_figure=True, use_container_width=True)
     st.caption(
         f"{cols}×{rows} · Máx: {grid.max():.3f} · Média: {grid.mean():.3f}"
@@ -938,11 +965,12 @@ def render_xt_surface_section() -> None:
 
 
 def main() -> None:
-    classification_model, tier_model = render_model_selectors()
+    classification_model, tier_model, xt_surface_mode = render_model_selectors()
     sig = inspect.signature(build_analytics)
     engine_supports_dual = (
         "tier_model" in sig.parameters and "classification_model" in sig.parameters
     )
+    engine_supports_xt_surface = "xt_surface_mode" in sig.parameters
     if not engine_supports_dual and (
         classification_model != CLASSIFICATION_MODEL_DEFAULT
         or tier_model != TIER_MODEL_DEFAULT
@@ -953,15 +981,23 @@ def main() -> None:
         )
         classification_model = CLASSIFICATION_MODEL_DEFAULT
         tier_model = TIER_MODEL_DEFAULT
+    if not engine_supports_xt_surface and xt_surface_mode != XT_SURFACE_MODE_ATUAL:
+        st.warning(
+            "Modos alternativos de superfície xT ainda não estão disponíveis neste deploy. "
+            "Reimplante o app no Streamlit Cloud para carregar a versão mais recente do engine."
+        )
+        xt_surface_mode = XT_SURFACE_MODE_ATUAL
 
     with st.spinner("Carregando dados…"):
         _, all_players = load_analytics(
             tier_model=tier_model,
             classification_model=classification_model,
+            xt_surface_mode=xt_surface_mode,
         )
         passes_by_player = load_passes(
             tier_model=tier_model,
             classification_model=classification_model,
+            xt_surface_mode=xt_surface_mode,
         )
 
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
@@ -986,7 +1022,7 @@ def main() -> None:
                 comparison_pool_by_group,
             )
     with tab_xt:
-        render_xt_surface_section()
+        render_xt_surface_section(xt_surface_mode)
 
 
 if __name__ == "__main__":
