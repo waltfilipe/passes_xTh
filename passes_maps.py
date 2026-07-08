@@ -31,11 +31,15 @@ COLOR_HIGHLY_PROGRESSIVE = "#fcd34d"
 CMAP_PASS_DEST = LinearSegmentedColormap.from_list(
     "pass_dest", ["#1a1a2e", "#1e3a8a", "#3b82f6", "#fbbf24", "#ef4444"]
 )
-CMAP_XT_SURFACE = LinearSegmentedColormap.from_list(
-    "xt_surface", ["#0f172a", "#1e3a8a", "#0d9488", "#84cc16", "#facc15", "#ef4444"]
+CMAP_XT_GRID = LinearSegmentedColormap.from_list(
+    "xt_grid", ["#1a1a2e", "#3b82f6", "#fbbf24", "#ef4444"]
 )
-XT_HEATMAP_COLS_DEFAULT = 12
-XT_HEATMAP_ROWS_DEFAULT = 8
+XT_HEATMAP_COLS_DEFAULT = 16
+XT_HEATMAP_ROWS_DEFAULT = 12
+XT_MAP_FIG_W, XT_MAP_FIG_H = 7.8, 5.2
+XT_MAP_FIG_DPI = 160
+XT_MAP_REF_WIDTH = 7.8
+XT_MAP_COLOR_PERCENTILE = (5.0, 95.0)
 
 
 def _map_scale(fig_w: float) -> float:
@@ -69,12 +73,13 @@ def _add_map_legend(ax, handles: list, *, fig_w: float) -> None:
     leg.get_frame().set_alpha(0.90)
 
 
-def _attack_arrow(fig, *, fig_w: float) -> None:
-    scale = _map_scale(fig_w)
+def _attack_arrow(fig, *, fig_w: float, has_cbar: bool = False) -> None:
+    scale = fig_w / MAP_REF_WIDTH
+    ox = -0.04 if has_cbar else 0.0
     fig.patches.append(
         FancyArrowPatch(
-            (0.44, 0.045),
-            (0.56, 0.045),
+            (0.44 + ox, 0.045),
+            (0.56 + ox, 0.045),
             transform=fig.transFigure,
             arrowstyle="-|>",
             mutation_scale=10 * scale,
@@ -83,9 +88,14 @@ def _attack_arrow(fig, *, fig_w: float) -> None:
         )
     )
     fig.text(
-        0.50, 0.012, "Attacking Direction",
-        ha="center", va="bottom", transform=fig.transFigure,
-        fontsize=7.0 * scale, color="#aaaaaa",
+        0.50 + ox,
+        0.012,
+        "Attacking Direction",
+        ha="center",
+        va="bottom",
+        transform=fig.transFigure,
+        fontsize=7.0 * scale,
+        color="#aaaaaa",
     )
 
 
@@ -236,7 +246,7 @@ def draw_xt_surface_heatmap(
     rows: int = XT_HEATMAP_ROWS_DEFAULT,
     compact: bool = False,
 ):
-    """Heatmap of the Heurístico v4 xT surface with quadrant mean values annotated."""
+    """16×12 xT grid — same layout and labels as wc-playeranalysis draw_xt_grid_map."""
     import passes_engine as pe
 
     cols = max(int(cols), 1)
@@ -244,22 +254,33 @@ def draw_xt_surface_heatmap(
     if compact:
         figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
         dpi = FIG_DPI_COMPACT
+        fig_w = figsize[0]
+        scale = _map_scale(fig_w)
     else:
-        figsize = (FIG_W, FIG_H)
-        dpi = FIG_DPI
+        figsize = (XT_MAP_FIG_W, XT_MAP_FIG_H)
+        dpi = XT_MAP_FIG_DPI
+        fig_w = XT_MAP_FIG_W
+        scale = fig_w / XT_MAP_REF_WIDTH
 
-    fig_w = figsize[0]
-    scale = _map_scale(fig_w)
     meta = pe.get_xt_surface_meta()
     grid = pe.get_xt_quadrant_grid(cols, rows)
     model_label = meta.get("model_label", "Heurístico v4 — Top 5 (último terço)")
 
-    fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
+    pitch = Pitch(pitch_type="statsbomb", pitch_color="#1a1a2e", line_color="#ffffff", line_alpha=0.95)
+    fig, ax = pitch.draw(figsize=figsize)
+    fig.set_facecolor("#1a1a2e")
+    fig.set_dpi(dpi)
+
     x_bins = np.linspace(0.0, FIELD_X, cols + 1)
     y_bins = np.linspace(0.0, FIELD_Y, rows + 1)
 
-    vmax = float(meta["surface_max"])
-    norm = Normalize(vmin=0.0, vmax=vmax)
+    p_lo, p_hi = XT_MAP_COLOR_PERCENTILE
+    vmin_f = float(np.percentile(grid, p_lo))
+    vmax_f = float(np.percentile(grid, p_hi))
+    if vmax_f <= vmin_f:
+        vmax_f = vmin_f + 1e-6
+    norm = Normalize(vmin=vmin_f, vmax=vmax_f)
+    threshold = vmin_f + (vmax_f - vmin_f) * 0.45
 
     for iy in range(rows):
         for ix in range(cols):
@@ -271,71 +292,31 @@ def draw_xt_surface_heatmap(
                     (x0, y0),
                     x1 - x0,
                     y1 - y0,
-                    facecolor=CMAP_XT_SURFACE(norm(value)),
-                    edgecolor=(1, 1, 1, 0.22),
-                    linewidth=0.35,
-                    alpha=0.96,
+                    facecolor=CMAP_XT_GRID(norm(value)),
+                    edgecolor=(1, 1, 1, 0.15),
+                    linewidth=0.4,
+                    alpha=0.95,
                     zorder=2,
                 )
             )
-            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-            cell_w, cell_h = x1 - x0, y1 - y0
-            fontsize = max(4.2, min(7.8, 5.8 * scale * min(cell_w / 10.0, cell_h / 10.0)))
-            text_color = "#0f172a" if value > vmax * 0.45 else "#f8fafc"
             ax.text(
-                cx,
-                cy,
-                f"{value:.2f}",
+                (x0 + x1) / 2.0,
+                (y0 + y1) / 2.0,
+                f"{value * 100:.1f}%",
                 ha="center",
                 va="center",
-                fontsize=fontsize,
-                color=text_color,
+                color="#000000" if value <= threshold else "#ffffff",
+                fontsize=5.2 * scale,
                 fontweight="600",
                 zorder=4,
             )
 
     pitch.draw(ax=ax)
+    ax.set_title(model_label, color="#eef1f7", fontsize=10 * scale, pad=8)
 
-    for x_line, style in (
-        (meta["attacking_two_thirds_x"], {"color": "#94a3b8", "linestyle": (0, (4, 4)), "alpha": 0.55}),
-        (meta["half_line_x"], {"color": "#cbd5e1", "linestyle": (0, (2, 3)), "alpha": 0.65}),
-        (meta["final_third_line_x"], {"color": "#f8fafc", "linestyle": (0, (2, 2)), "alpha": 0.75}),
-    ):
-        ax.plot([x_line, x_line], [0, FIELD_Y], zorder=5, linewidth=0.9 * scale, **style)
-
-    ax.scatter(
-        [meta["goal_x"]],
-        [meta["goal_y"]],
-        s=38 * scale,
-        marker="*",
-        color="#fef08a",
-        edgecolors="#0f172a",
-        linewidths=0.4,
-        zorder=6,
-    )
-
-    sm = plt.cm.ScalarMappable(cmap=CMAP_XT_SURFACE, norm=norm)
+    sm = plt.cm.ScalarMappable(cmap=CMAP_XT_GRID, norm=norm)
     cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
-    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2f}"))
     cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
     plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-    cbar.set_label(model_label, color="#c7cdda", fontsize=7 * scale)
-
-    legend_handles = [
-        Line2D([0], [0], color="#94a3b8", lw=1.0, linestyle="--", label="2/3 ofensivo (x=40)"),
-        Line2D([0], [0], color="#cbd5e1", lw=1.0, linestyle=":", label="Meio-campo (x=60)"),
-        Line2D([0], [0], color="#f8fafc", lw=1.0, linestyle="-", label="Terço final (x=80)"),
-        Line2D([0], [0], marker="*", color="w", markerfacecolor="#fef08a", markersize=7,
-               linestyle="None", label="Gol adversário"),
-    ]
-    _add_map_legend(ax, legend_handles, fig_w=fig_w)
-
-    ax.set_title(
-        f"{model_label} · {cols}×{rows} quadrantes\n"
-        f"valores = média xT por célula · ataque →",
-        color="white",
-        fontsize=8.4 * scale,
-        pad=5,
-    )
-    _attack_arrow(fig, fig_w=fig_w)
+    _attack_arrow(fig, fig_w=fig_w, has_cbar=True)
     return fig

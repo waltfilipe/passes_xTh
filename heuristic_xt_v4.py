@@ -13,7 +13,7 @@ from scipy.interpolate import RegularGridInterpolator
 from external_models import load_markov_model
 from heuristic_scoring import xt_bilinear_batch
 
-XT_MODEL_LABEL = "Heurístico v4 — Top 5 (último terço)"
+XT_MODEL_LABEL = "Heurístico v4 · Top5 (último terço)"
 
 FIELD_X, FIELD_Y = 120.0, 80.0
 HALF_LINE_X = FIELD_X / 2.0
@@ -333,7 +333,7 @@ def adjust_delta_v4(
 
 
 @functools.lru_cache(maxsize=8)
-def quadrant_xt_grid(cols: int = 12, rows: int = 8) -> np.ndarray:
+def quadrant_xt_grid(cols: int = NX_XT_DISPLAY, rows: int = NY_XT_DISPLAY) -> np.ndarray:
     """Display-oriented quadrant means (post-processed like wc-playeranalysis maps)."""
     cols = max(int(cols), 1)
     rows = max(int(rows), 1)

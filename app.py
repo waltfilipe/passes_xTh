@@ -48,7 +48,7 @@ RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
 CLASSIFICATION_MODEL_SELECT_KEY = "classification_model_select"
 TIER_MODEL_SELECT_KEY = "tier_model_select"
-XT_GRID_SELECT_KEY = "xt_grid_select"
+XT_GRID_SELECT_KEY = "xt_grid_select_v2"
 build_analytics = pe.build_analytics
 compute_pass_ratings = pe.compute_pass_ratings
 compute_comparison_ratings = getattr(pe, "compute_comparison_ratings", None)
@@ -887,7 +887,7 @@ def render_model_selectors() -> tuple[str, str]:
 
 
 def render_xt_surface_section() -> None:
-    st.subheader("Mapa de calor — Heurístico v4 (Top 5, último terço)")
+    st.subheader("Mapa xT por quadrante")
     if draw_xt_surface_heatmap is None or get_xt_quadrant_grid is None:
         st.warning(
             "O mapa xT precisa da versão mais recente de passes_engine.py e passes_maps.py. "
@@ -895,13 +895,13 @@ def render_xt_surface_section() -> None:
         )
         return
     st.caption(
-        "Valores por quadrante = média da superfície xT usada no engine "
-        "(Heurístico v4 — Top 5, com bônus Markov concentrado no último terço). "
-        "Útil para entender por que passes geometricamente próximos ao gol podem ter ΔxT diferente."
+        "Grid 16×12 · Heurístico v4 · Top5 (último terço) — v3.1 + bônus Markov Top5 "
+        "quase nulo nos 2/3 defensivos, notável no último terço. Valores por célula em %."
     )
 
     grid_options = {
-        "12×8 (detalhado)": (12, 8),
+        "16×12 (padrão)": (16, 12),
+        "12×8": (12, 8),
         "8×6": (8, 6),
         "6×4 (resumido)": (6, 4),
     }
@@ -917,13 +917,16 @@ def render_xt_surface_section() -> None:
         return
 
     stat_cols = st.columns(4)
-    stat_cols[0].metric("xT mínimo", f"{float(grid.min()):.3f}")
-    stat_cols[1].metric("xT máximo", f"{float(grid.max()):.3f}")
-    stat_cols[2].metric("xT médio", f"{float(grid.mean()):.3f}")
+    stat_cols[0].metric("xT mínimo", f"{float(grid.min()) * 100:.1f}%")
+    stat_cols[1].metric("xT máximo", f"{float(grid.max()) * 100:.1f}%")
+    stat_cols[2].metric("xT médio", f"{float(grid.mean()) * 100:.1f}%")
     stat_cols[3].metric("Quadrantes", f"{cols}×{rows}")
 
     fig = draw_xt_surface_heatmap(cols=cols, rows=rows, compact=False)
     st.pyplot(fig, clear_figure=True, use_container_width=True)
+    st.caption(
+        f"{cols}×{rows} · Máx: {grid.max():.3f} · Média: {grid.mean():.3f}"
+    )
 
     with st.expander("Tabela de valores por quadrante"):
         import pandas as pd
@@ -931,7 +934,7 @@ def render_xt_surface_section() -> None:
         x_labels = [f"x {i + 1}" for i in range(cols)]
         y_labels = [f"y {rows - i}" for i in range(rows)]
         table = pd.DataFrame(grid[::-1], index=y_labels, columns=x_labels)
-        st.dataframe(table.style.format("{:.3f}"), use_container_width=True)
+        st.dataframe(table.style.format("{:.1%}"), use_container_width=True)
 
 
 def main() -> None:

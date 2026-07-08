@@ -47,7 +47,7 @@ except ImportError:
 # ── Paths & eligibility ─────────────────────────────────────────────────────
 SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 31
+DATA_CACHE_VERSION = 32
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -221,7 +221,7 @@ def _adjust_delta_v4(
 
 
 @functools.lru_cache(maxsize=8)
-def get_xt_quadrant_grid(cols: int = 12, rows: int = 8, samples_per_cell: int = 4) -> np.ndarray:
+def get_xt_quadrant_grid(cols: int = 16, rows: int = 12, samples_per_cell: int = 4) -> np.ndarray:
     """Mean xT per pitch quadrant (rows × cols), StatsBomb coordinates."""
     return hx4.quadrant_xt_grid(cols, rows)
 
