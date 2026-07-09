@@ -123,36 +123,6 @@ def _fit_dashboard_pass_axes(fig, ax) -> None:
     ax.set_position([pos.x0, pos.y0 + 0.012, pos.width, pos.height * 0.97])
 
 
-def _reserve_heatmap_colorbar_space(fig, ax) -> None:
-    """Shrink/lift pitch so pitch + legend matches pass-map height."""
-    pos = ax.get_position()
-    reserve = 0.072
-    ax.set_position([pos.x0, pos.y0 + reserve, pos.width, max(pos.height - reserve, 0.55)])
-
-
-def _bottom_colorbar(
-    fig,
-    ax,
-    norm: Normalize,
-    cmap,
-    *,
-    label: str,
-    scale: float,
-) -> None:
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    pos = ax.get_position()
-    cbar_h = 0.034
-    cbar_y = max(0.045, pos.y0 - cbar_h - 0.018)
-    cax = fig.add_axes([pos.x0, cbar_y, pos.width, cbar_h])
-    cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
-    cbar.ax.tick_params(color="#ffffff", labelsize=4.0 * scale, length=1.5)
-    cbar.ax.xaxis.set_major_formatter(
-        plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
-    )
-    plt.setp(cbar.ax.axes.get_xticklabels(), color="#ffffff")
-    cbar.set_label(label, color="#94a3b8", fontsize=4.6 * scale, labelpad=1)
-
-
 def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: float) -> None:
     pitch.arrows(
         x1, y1, x2, y2,
@@ -365,23 +335,12 @@ def draw_pass_destination_heatmap(
             )
 
     pitch.draw(ax=ax)
-    cbar_label = "Passes impact" if impact_only else "Passes completos"
     if dashboard or dashboard_large:
         if dashboard:
             _fit_dashboard_pass_axes(fig, ax)
-            _reserve_heatmap_colorbar_space(fig, ax)
-        _bottom_colorbar(fig, ax, norm, CMAP_PASS_DEST, label=cbar_label, scale=scale)
         title = "Destino · impact" if impact_only else "Destino · completos"
         ax.set_title(title, color="white", fontsize=8.0 * scale, pad=4)
     else:
-        sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
-        cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
-        cbar.ax.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
-        )
-        cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
-        plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-        cbar.set_label(cbar_label, color="#c7cdda", fontsize=7 * scale)
         dest_kind = "passes impact" if impact_only else "passes completos"
         ax.set_title(
             f"{player_name}\nDestino — {dest_kind} · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
@@ -464,13 +423,6 @@ def draw_pass_origin_heatmap(
             )
 
     pitch.draw(ax=ax)
-    if not mini and not tiny and not compare:
-        sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
-        cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
-        cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
-        cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
-        plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-        cbar.set_label("Passes completos", color="#c7cdda", fontsize=7 * scale)
     if compare:
         title_size = 8.0 * scale
         title_pad = 6

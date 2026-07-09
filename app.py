@@ -1059,7 +1059,6 @@ def render_map_section(
     pool_by_position: dict[str, list[dict]],
     passes_by_player: dict,
 ) -> None:
-    st.subheader("Análise do jogador")
     st.caption("Selecione abaixo ou clique em um jogador na aba Ranking.")
 
     options = _player_options(all_players)
@@ -1240,6 +1239,8 @@ def _render_comparison_maps_row(
 def render_presentation_tab(
     all_players: list[dict],
     passes_by_player: dict,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
 ) -> None:
     st.subheader("Apresentação")
     st.markdown(
@@ -1266,58 +1267,18 @@ def render_presentation_tab(
     if example:
         ex_id = str(example["player_id"])
         ex_passes = passes_by_player[ex_id]
-        ex_name = str(example.get("player_name", "Jogador"))
-        st.markdown("#### Exemplo visual — quatro mapas (grid 2×2)")
-        st.caption(f"Referência: {ex_name} ({example.get('team', '—')})")
+        player = dict(players_by_id.get(ex_id, example))
+        if not player.get("eligible_for_rating"):
+            group = str(player.get("position_group") or "—")
+            player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
+        st.markdown("#### Exemplo — mesmo layout do Dashboard")
+        st.caption(f"Referência: {player.get('player_name', 'Jogador')} ({player.get('team', '—')})")
         st.markdown(
-            '<div class="pres-card"><p>No <strong>Dashboard</strong>, os quatro mapas ficam do mesmo tamanho: '
-            "completos e destino na linha de cima; impact e destino de impact embaixo.</p></div>",
+            '<div class="pres-card"><p>Grid <strong>2×2</strong> à esquerda (completos, destino, impact, destino) '
+            "e cards à direita com rating e pilares expansíveis — igual à aba Dashboard.</p></div>",
             unsafe_allow_html=True,
         )
-        r1c1, r1c2 = st.columns(2, gap="small")
-        with r1c1:
-            st.markdown(
-                '<div class="pres-card"><h4>Passes completos</h4>'
-                "<p>Cada passe <em>completado</em> — origem e trajeto.</p></div>",
-                unsafe_allow_html=True,
-            )
-            fig = draw_all_completed_passes_map(
-                ex_passes, ex_name, str(example.get("team", "—")), compact=False,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with r1c2:
-            st.markdown(
-                '<div class="pres-card"><h4>Destino · completos</h4>'
-                "<p>Heatmap de onde os passes completos <em>chegam</em>.</p></div>",
-                unsafe_allow_html=True,
-            )
-            fig = draw_pass_destination_heatmap(
-                ex_passes,
-                ex_name,
-                str(example.get("team", "—")),
-                compact=False,
-                impact_only=False,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        r2c1, r2c2 = st.columns(2, gap="small")
-        with r2c1:
-            st.markdown(
-                '<div class="pres-card"><h4>Passes de impacto</h4>'
-                "<p>Subset que muda o xT de forma relevante.</p></div>",
-                unsafe_allow_html=True,
-            )
-            fig = draw_impact_pass_map(ex_passes, ex_name, str(example.get("team", "—")), compact=False)
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with r2c2:
-            st.markdown(
-                '<div class="pres-card"><h4>Destino · impact</h4>'
-                "<p>Heatmap de destino dos passes de impacto.</p></div>",
-                unsafe_allow_html=True,
-            )
-            fig = draw_pass_destination_heatmap(
-                ex_passes, ex_name, str(example.get("team", "—")), compact=False,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        render_player_layout(player, ex_passes)
 
     st.markdown("#### Pilares de avaliação")
     pillar_lines = "".join(
@@ -1351,9 +1312,9 @@ def render_presentation_tab(
         )
         st.markdown(
             '<div class="pres-card"><h4>Similaridade B ↔ A</h4>'
-            "<p>Compare jogadores entre ligas na mesma posição detalhada. "
-            "Na comparação: dois mapas 12×8 de origem e tabela com ▲/▼ "
-            "verde/vermelho entre os percentis.</p></div>",
+            "<p>Compare jogadores entre ligas na mesma posição detalhada via "
+            "<strong>z-score</strong> ponderado. Na comparação: mapas de origem e tabela com ▲/▼ "
+            "entre percentis.</p></div>",
             unsafe_allow_html=True,
         )
 
@@ -1362,7 +1323,7 @@ def render_presentation_tab(
         ("Apresentação", "Entenda mapas, pilares e o fluxo de leitura."),
         ("Dashboard", "Grid 2×2 de mapas à esquerda; card geral e pilares à direita."),
         ("Ranking", "Tabelas por grupo de posição — clique para abrir no Dashboard."),
-        ("Similaridade", "Selecione um atleta e compare com similares da outra liga."),
+        ("Similaridade", "Selecione um atleta e compare com similares da outra liga (z-score)."),
     ]
     for idx, (title, text) in enumerate(steps, start=1):
         st.markdown(
@@ -1654,19 +1615,15 @@ def render_similarity_section(
         target = dict(players_sb_by_id[target_id])
         target_passes = passes_by_player_sb.get(target_id)
         pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
-        full_dest_pool = sim.outfield_players(serie_a_enriched)
         pool_passes = serie_a_passes
         pool_label = f"Série A · {search_pos or '—'}"
-        origin_pool_label = f"Série A · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
         target_league = "Série B"
     else:
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
         pool = sim.similarity_search_pool(sb_by_pos, search_pos)
-        full_dest_pool = sim.outfield_players(sb_enriched)
         pool_passes = passes_by_player_sb
         pool_label = f"Série B · {search_pos or '—'}"
-        origin_pool_label = f"Série B · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
         target_league = "Série A"
 
     if not search_pos:
@@ -1690,107 +1647,38 @@ def render_similarity_section(
     c1.metric("Minutos", fmt_stat_value("minutes", target.get("minutes")))
     c2.metric("Passes", fmt_stat_value("passes_completed", target.get("passes_completed")))
 
-    tab_a, tab_c, tab_origin = st.tabs(
-        ["Opção A — percentil", "Opção C — z-score", "Origem dos passes"]
-    )
-
     top_k = SIMILARITY_TOP_K
     target_league_label = target_league
     similar_league_label = "Série A" if sb_to_sa else "Série B"
 
-    with tab_a:
-        st.caption(
-            f"Distância euclidiana no perfil percentil (0–100) dentro do pool {similar_league_label}."
-        )
-        results_a = sim.find_similar_option_a(target, pool, top_k=top_k)
-        _render_similarity_results_tab(
-            results=results_a,
-            target=target,
-            target_passes=target_passes,
-            pool_passes=pool_passes,
-            target_league=target_league_label,
-            similar_league=similar_league_label,
-            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
-            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
-            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
-            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
-            pick_key=f"sim_{prefix}_pick_a",
-            include_origin=False,
-        )
-        with st.expander("Métricas usadas (Opção A)"):
-            st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
-
-    with tab_c:
-        st.caption(
-            f"Distância euclidiana ponderada em z-scores do pool {similar_league_label}. "
-            f"A coluna **Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})** "
-            "é informativa (cosseno entre mapas de origem) e não altera o ranking."
-        )
-        results_c = sim.find_similar_option_c(target, pool, top_k=top_k)
-        results_c = sim.attach_pass_origin_similarity(
-            results_c,
-            target_passes,
-            pool_passes,
-        )
-        _render_similarity_results_tab(
-            results=results_c,
-            target=target,
-            target_passes=target_passes,
-            pool_passes=pool_passes,
-            target_league=target_league_label,
-            similar_league=similar_league_label,
-            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
-            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
-            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
-            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
-            pick_key=f"sim_{prefix}_pick_c",
-            include_origin=False,
-            origin_column=True,
-        )
-        with st.expander("Métricas usadas (Opção C)"):
-            st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
-
-    with tab_origin:
-        st.caption(
-            f"Dupla similaridade: (1) top {sim.ORIGIN_PREFILTER_TOP_N} jogadores de "
-            f"{similar_league_label} com origem de passes mais parecida (qualquer posição); "
-            f"(2) entre eles, ranking por perfil percentil das métricas (Opção A)."
-        )
-        if sim.pass_origin_profile(target_passes) is None:
-            st.warning("Sem passes completos suficientes para perfil de origem do jogador selecionado.")
-            return
-        if not pool_passes or not full_dest_pool:
-            st.warning("Passes do pool indisponíveis para comparação espacial.")
-            return
-        st.caption(f"Pool etapa 1: **{origin_pool_label}** ({len(full_dest_pool)} elegíveis)")
-        results_origin = sim.find_similar_origin_then_percentile(
-            target,
-            target_passes,
-            full_dest_pool,
-            pool_passes,
-            top_k=top_k,
-        )
-        _render_similarity_results_tab(
-            results=results_origin,
-            target=target,
-            target_passes=target_passes,
-            pool_passes=pool_passes,
-            target_league=target_league_label,
-            similar_league=similar_league_label,
-            target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
-            similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
-            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
-            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
-            pick_key=f"sim_{prefix}_pick_origin",
-            origin_dual=True,
-        )
-        with st.expander("Como interpretar"):
-            st.markdown(
-                f"- **Sim. origem**: cosseno entre mapas {sim.ORIGIN_GRID_COLS}×{sim.ORIGIN_GRID_ROWS} "
-                "de onde os passes completos começam\n"
-                "- **Sim. métricas**: percentil das métricas (Opção A) só entre os candidatos de origem parecida\n"
-                "- **Origem dominante**: zona com maior % de passes daquele jogador"
-            )
+    st.caption(
+        f"Ranking por distância euclidiana ponderada em z-scores do pool {similar_league_label}. "
+        f"A coluna **Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})** "
+        "é informativa (cosseno entre mapas de origem) e não altera o ranking."
+    )
+    results = sim.find_similar_option_c(target, pool, top_k=top_k)
+    results = sim.attach_pass_origin_similarity(
+        results,
+        target_passes,
+        pool_passes,
+    )
+    _render_similarity_results_tab(
+        results=results,
+        target=target,
+        target_passes=target_passes,
+        pool_passes=pool_passes,
+        target_league=target_league_label,
+        similar_league=similar_league_label,
+        target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
+        similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
+        target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
+        similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
+        pick_key=f"sim_{prefix}_pick",
+        include_origin=False,
+        origin_column=True,
+    )
+    with st.expander("Métricas usadas"):
+        st.write(", ".join(metric_label(k) for k in sim.SIMILARITY_METRICS_A))
 
 
 def main() -> None:
@@ -1818,7 +1706,7 @@ def main() -> None:
         ["Apresentação", "Dashboard", "Ranking", "Similaridade B->A", "Similaridade A->B"]
     )
     with tab_pres:
-        render_presentation_tab(all_players, passes_by_player)
+        render_presentation_tab(all_players, passes_by_player, players_by_id, pool_by_position)
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
     with tab_ranking:
