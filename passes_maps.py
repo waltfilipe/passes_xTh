@@ -136,6 +136,10 @@ def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: f
     )
 
 
+DASHBOARD_TITLE_COMPLETED = "Passes completos\nCirculação com a bola"
+DASHBOARD_TITLE_DEST_COMPLETED = "Destino dos completos\nOnde os passes chegam"
+DASHBOARD_TITLE_IMPACT = "Passes de impacto\nMudança relevante de xT"
+DASHBOARD_TITLE_DEST_IMPACT = "Destino do impacto\nZonas de penetração"
 COLOR_ALL_PASSES = "#64748b"
 COLOR_ALL_PASSES_END = "#94a3b8"
 ALL_PASS_ARROW_ALPHA = 0.22
@@ -204,8 +208,8 @@ def draw_all_completed_passes_map(
     ]
     _add_map_legend(ax, legend_handles, fig_w=fig_w)
     ax.set_title(
-        "Passes completos" if dashboard else f"{player_name}\nPasses completos · {match_label}",
-        color="white", fontsize=8.0 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
+        DASHBOARD_TITLE_COMPLETED if dashboard else f"{player_name}\nPasses completos · {match_label}",
+        color="white", fontsize=7.6 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
     if not dashboard and not dashboard_large:
         _attack_arrow(fig, fig_w=fig_w)
@@ -262,8 +266,8 @@ def draw_impact_pass_map(
     ]
     _add_map_legend(ax, legend_handles, fig_w=fig_w)
     ax.set_title(
-        "Passes impact" if dashboard else f"{player_name}\nPasses Impact · {match_label}",
-        color="white", fontsize=8.0 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
+        DASHBOARD_TITLE_IMPACT if dashboard else f"{player_name}\nPasses Impact · {match_label}",
+        color="white", fontsize=7.6 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
     if not dashboard and not dashboard_large:
         _attack_arrow(fig, fig_w=fig_w)
@@ -338,8 +342,8 @@ def draw_pass_destination_heatmap(
     if dashboard or dashboard_large:
         if dashboard:
             _fit_dashboard_pass_axes(fig, ax)
-        title = "Destino · impact" if impact_only else "Destino · completos"
-        ax.set_title(title, color="white", fontsize=8.0 * scale, pad=4)
+        title = DASHBOARD_TITLE_DEST_IMPACT if impact_only else DASHBOARD_TITLE_DEST_COMPLETED
+        ax.set_title(title, color="white", fontsize=7.6 * scale, pad=4)
     else:
         dest_kind = "passes impact" if impact_only else "passes completos"
         ax.set_title(

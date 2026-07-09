@@ -296,6 +296,106 @@ st.markdown(
     }
     .pres-card h4 { margin: 0 0 0.35rem 0; color: #e2e8f0; font-size: 1rem; }
     .pres-card p { margin: 0; color: #94a3b8; font-size: 0.88rem; line-height: 1.45; }
+    .pres-card-hero {
+        border-color: #334155;
+        background: linear-gradient(145deg, #172035 0%, #101522 55%, #0f172a 100%);
+        padding: 1.15rem 1.25rem;
+    }
+    .pres-card-hero h4 { font-size: 1.12rem; color: #f1f5f9; }
+    .pres-cards-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 0.85rem;
+    }
+    @media (max-width: 900px) {
+        .pres-cards-row { grid-template-columns: 1fr; }
+        .pres-layout-demo { grid-template-columns: 1fr !important; }
+    }
+    .pres-mini-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.95rem 1rem;
+        height: 100%;
+    }
+    .pres-mini-card h4 { margin: 0 0 0.3rem 0; color: #93c5fd; font-size: 0.92rem; }
+    .pres-mini-card p { margin: 0; color: #94a3b8; font-size: 0.84rem; line-height: 1.42; }
+    .pres-layout-demo {
+        display: grid;
+        grid-template-columns: 1.68fr 0.72fr;
+        gap: 0.65rem;
+        align-items: stretch;
+    }
+    .pres-grid-demo {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.35rem;
+    }
+    .pres-blur-tile {
+        position: relative;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #2a3550;
+        aspect-ratio: 3 / 2;
+        background: #101522;
+    }
+    .pres-blur-tile img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+        filter: blur(7px);
+        transform: scale(1.08);
+        opacity: 0.9;
+    }
+    .pres-blur-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        padding: 0.7rem 0.8rem;
+        background: linear-gradient(180deg, rgba(10,14,24,0.35) 0%, rgba(10,14,24,0.88) 100%);
+    }
+    .pres-blur-overlay strong {
+        color: #f1f5f9;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin-bottom: 0.3rem;
+        line-height: 1.25;
+    }
+    .pres-blur-overlay p {
+        color: #cbd5e1;
+        font-size: 0.76rem;
+        line-height: 1.4;
+        margin: 0;
+        max-width: 16rem;
+    }
+    .pres-blur-panel {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #2a3550;
+        min-height: 100%;
+        background: #101522;
+    }
+    .pres-blur-back {
+        filter: blur(5px);
+        transform: scale(1.02);
+        pointer-events: none;
+        user-select: none;
+        opacity: 0.85;
+    }
+    .pres-blur-overlay-side {
+        justify-content: center;
+        padding: 1.1rem;
+    }
+    .pres-blur-overlay-side strong { font-size: 1rem; max-width: 14rem; }
+    .pres-blur-overlay-side p { font-size: 0.82rem; max-width: 15rem; }
+    .pres-card-sim { border-color: #1e3a5f; }
     .pres-step {
         display: flex;
         gap: 0.75rem;
@@ -1236,27 +1336,47 @@ def _render_comparison_maps_row(
             st.caption("Sem passes.")
 
 
-def render_presentation_tab(
+def _fig_to_blurred_b64(fig, *, blur_radius: int = 7) -> str:
+    import base64
+    import io
+
+    import matplotlib.pyplot as plt
+    from PIL import Image, ImageFilter
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=fig.dpi, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    out = io.BytesIO()
+    blurred.save(out, format="PNG")
+    return base64.b64encode(out.getvalue()).decode("ascii")
+
+
+def _pres_blur_tile_html(b64: str, title: str, text: str) -> str:
+    return (
+        '<div class="pres-blur-tile">'
+        f'<img src="data:image/png;base64,{b64}" alt="">'
+        '<div class="pres-blur-overlay">'
+        f"<strong>{html.escape(title)}</strong>"
+        f"<p>{html.escape(text)}</p>"
+        "</div></div>"
+    )
+
+
+def _presentation_example_player(
     all_players: list[dict],
     passes_by_player: dict,
-    players_by_id: dict[str, dict],
-    pool_by_position: dict[str, list[dict]],
-) -> None:
-    st.subheader("Apresentação")
-    st.markdown(
-        "Guia rápido do **Passes xTh**: o que cada visual mostra e como interpretar "
-        "os números na prática de scouting."
-    )
-
-    st.markdown(
-        '<div class="pres-card"><h4>O que é este dashboard?</h4>'
-        "<p>Medimos a qualidade dos passes com um modelo de <strong>expected threat (xT)</strong>. "
-        "Passes que aumentam a probabilidade de gol valem mais. O rating resume o jogador "
-        "frente aos pares da <strong>mesma posição</strong> na Série B.</p></div>",
-        unsafe_allow_html=True,
-    )
-
-    example = next(
+) -> dict | None:
+    for player in all_players:
+        if str(player.get("player_name", "")).strip().lower() != "aderlan":
+            continue
+        pid = str(player["player_id"])
+        passes = passes_by_player.get(pid)
+        if passes is not None and not passes.empty:
+            return player
+    return next(
         (
             p for p in all_players
             if passes_by_player.get(str(p["player_id"])) is not None
@@ -1264,6 +1384,82 @@ def render_presentation_tab(
         ),
         None,
     )
+
+
+def _render_presentation_blur_demo(player: dict, passes) -> None:
+    team_label = str(player.get("team", "—"))
+    name = str(player.get("player_name", "Jogador"))
+    map_specs = [
+        (
+            draw_all_completed_passes_map(passes, name, team_label, dashboard=True),
+            "Passes completos",
+            "Todos os passes completados: origem e trajeto. Mostra onde o jogador circula com a bola.",
+        ),
+        (
+            draw_pass_destination_heatmap(
+                passes, name, team_label, dashboard=True, impact_only=False,
+            ),
+            "Destino dos completos",
+            "Heatmap de chegada dos passes completos — zonas onde o time passa a ameaçar.",
+        ),
+        (
+            draw_impact_pass_map(passes, name, team_label, dashboard=True),
+            "Passes de impacto",
+            "Passes que mudam o xT de forma relevante. Cores destacam progressão e alto impacto.",
+        ),
+        (
+            draw_pass_destination_heatmap(passes, name, team_label, dashboard=True),
+            "Destino do impacto",
+            "Para onde vão os passes de impacto — leitura de penetração e linhas de passe decisivas.",
+        ),
+    ]
+    tiles_html = "".join(
+        _pres_blur_tile_html(_fig_to_blurred_b64(fig), title, text)
+        for fig, title, text in map_specs
+    )
+    sidebar_back = _build_dashboard_sidebar_html(player)
+    demo_html = (
+        '<div class="pres-layout-demo">'
+        f'<div class="pres-grid-demo">{tiles_html}</div>'
+        '<div class="pres-blur-panel">'
+        f'<div class="pres-blur-back">{sidebar_back}</div>'
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        "<strong>Cards do jogador</strong>"
+        "<p>À direita: rating geral, participação e pilares com nota. "
+        "Clique na seta de cada pilar para abrir as métricas detalhadas.</p>"
+        "</div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+def render_presentation_tab(
+    all_players: list[dict],
+    passes_by_player: dict,
+    players_by_id: dict[str, dict],
+    pool_by_position: dict[str, list[dict]],
+) -> None:
+    st.markdown(
+        '<div class="pres-card pres-card-hero">'
+        "<h4>Passes xTh — scouting de passes com expected threat</h4>"
+        "<p>Medimos a qualidade dos passes com um modelo de <strong>expected threat (xT)</strong>. "
+        "Passes que aumentam a probabilidade de gol valem mais. O rating resume o jogador "
+        "frente aos pares da <strong>mesma posição</strong> na Série B.</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="pres-cards-row">'
+        '<div class="pres-mini-card"><h4>Dashboard</h4>'
+        "<p>Grid 2×2 de mapas à esquerda e cards à direita com rating, participação e pilares expansíveis.</p></div>"
+        '<div class="pres-mini-card"><h4>Ranking</h4>'
+        "<p>Tabelas por grupo de posição. Clique em um jogador para abrir sua análise no Dashboard.</p></div>"
+        '<div class="pres-mini-card"><h4>Similaridade</h4>'
+        "<p>Compare jogadores entre Série B e Série A na mesma posição detalhada via z-score.</p></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    example = _presentation_example_player(all_players, passes_by_player)
     if example:
         ex_id = str(example["player_id"])
         ex_passes = passes_by_player[ex_id]
@@ -1271,65 +1467,41 @@ def render_presentation_tab(
         if not player.get("eligible_for_rating"):
             group = str(player.get("position_group") or "—")
             player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
-        st.markdown("#### Exemplo — mesmo layout do Dashboard")
-        st.caption(f"Referência: {player.get('player_name', 'Jogador')} ({player.get('team', '—')})")
+        player_name = html.escape(str(player.get("player_name", "Jogador")))
+        team_name = html.escape(str(player.get("team", "—")))
         st.markdown(
-            '<div class="pres-card"><p>Grid <strong>2×2</strong> à esquerda (completos, destino, impact, destino) '
-            "e cards à direita com rating e pilares expansíveis — igual à aba Dashboard.</p></div>",
+            f'<div class="pres-card"><h4>Exemplo · {player_name}</h4>'
+            f"<p>Prévia explicativa do Dashboard com dados de <strong>{team_name}</strong>. "
+            "Os visuais ficam em blur — o foco é entender o que cada bloco representa.</p></div>",
             unsafe_allow_html=True,
         )
-        render_player_layout(player, ex_passes)
+        _render_presentation_blur_demo(player, ex_passes)
 
-    st.markdown("#### Pilares de avaliação")
-    pillar_lines = "".join(
-        f"<li><strong>{html.escape(title)}</strong> — {html.escape(subtitle)}</li>"
-        for _key, title, subtitle, _keys in SCOUT_SECTION_SPECS
-    )
     st.markdown(
-        '<div class="pres-card"><h4>Cards com nota por pilar</h4>'
-        "<p>À direita dos mapas: card geral no topo e pilares abaixo. "
-        "Clique na <strong>seta</strong> de cada pilar para ver as métricas.</p>"
-        f"<ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
-        f"font-size:0.88rem;line-height:1.5'>{pillar_lines}</ul></div>",
+        '<div class="pres-card pres-card-sim"><h4>Como funciona a similaridade</h4>'
+        "<p>Selecione um jogador de uma liga e o sistema busca os <strong>10 mais parecidos</strong> "
+        "na outra liga, na <strong>mesma posição detalhada</strong>.</p>"
+        "<p style='margin-top:0.55rem'>O ranking usa <strong>distância euclidiana ponderada em z-scores</strong> "
+        "das métricas de passe no pool da posição. Quanto menor a distância, maior a similaridade.</p>"
+        "<p style='margin-top:0.55rem'>Ao clicar em um similar, você vê mapas de origem lado a lado e uma tabela "
+        "com percentis e setas ▲/▼ comparando referência e candidato. A coluna de similaridade de origem "
+        "é informativa e não altera o ranking.</p></div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### Métricas e rating")
-    col_m1, col_m2 = st.columns(2, gap="medium")
-    with col_m1:
-        st.markdown(
-            '<div class="pres-card"><h4>Leitura das métricas</h4>'
-            "<p>Nomes em linguagem de scout; passe o mouse para ver a definição. "
-            "Abaixo de cada valor: <em>23º em Laterais</em> no grupo de posição.</p></div>",
-            unsafe_allow_html=True,
-        )
-    with col_m2:
-        st.markdown(
-            '<div class="pres-card"><h4>Rating geral (0–10)</h4>'
-            "<p>Média dos ranks nas métricas principais. "
-            "Verde = topo do grupo; amarelo = meio; vermelho = abaixo.</p></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="pres-card"><h4>Similaridade B ↔ A</h4>'
-            "<p>Compare jogadores entre ligas na mesma posição detalhada via "
-            "<strong>z-score</strong> ponderado. Na comparação: mapas de origem e tabela com ▲/▼ "
-            "entre percentis.</p></div>",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("#### Como usar")
     steps = [
-        ("Apresentação", "Entenda mapas, pilares e o fluxo de leitura."),
-        ("Dashboard", "Grid 2×2 de mapas à esquerda; card geral e pilares à direita."),
-        ("Ranking", "Tabelas por grupo de posição — clique para abrir no Dashboard."),
-        ("Similaridade", "Selecione um atleta e compare com similares da outra liga (z-score)."),
+        ("Apresentação", "Entenda o layout e a lógica de leitura."),
+        ("Dashboard", "Analise mapas e cards de qualquer jogador."),
+        ("Ranking", "Explore o ranking por grupo e abra jogadores no Dashboard."),
+        ("Similaridade", "Compare atletas entre Série B e Série A."),
     ]
     for idx, (title, text) in enumerate(steps, start=1):
         st.markdown(
-            f'<div class="pres-step"><span class="pres-step-num">{idx}</span>'
+            f'<div class="pres-card"><div class="pres-step">'
+            f'<span class="pres-step-num">{idx}</span>'
             f"<div><strong>{html.escape(title)}</strong><br>"
-            f'<span style="color:#94a3b8;font-size:0.88rem">{html.escape(text)}</span></div></div>',
+            f'<span style="color:#94a3b8;font-size:0.88rem">{html.escape(text)}</span></div>'
+            f"</div></div>",
             unsafe_allow_html=True,
         )
 
