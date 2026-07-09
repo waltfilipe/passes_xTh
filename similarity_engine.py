@@ -47,10 +47,16 @@ SIMILARITY_METRICS_A: tuple[str, ...] = (
     "aggression_aip_per_pass",
 )
 
-from passes_engine import SCOUT_SECTION_SPECS
-
-SIMILARITY_COMPARE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
-    (title, keys) for _section_key, title, _subtitle, keys in SCOUT_SECTION_SPECS
+# Keep in sync with passes_engine.SCOUT_SECTION_SPECS (no import — avoids circular load on Cloud).
+SIMILARITY_COMPARE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Produção por 90 min", ("impact_passes_p90", "phi_p90", "dxt_p90")),
+    (
+        "Eficiência por passe",
+        ("impact_per_pass", "phi_per_pass", "dxt_per_pass", "dxt_gt_01_pct"),
+    ),
+    ("Jogo vertical", ("long_balls", "long_impact_passes", "long_impact_per_long_pass")),
+    ("Construção de jogo", ("construction_aip", "construction_aip_per_pass")),
+    ("Penetração ofensiva", ("aggression_aip", "aggression_aip_per_pass")),
 )
 
 # Option C — z-score distance (higher weight on core impact volume).
