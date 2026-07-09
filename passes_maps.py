@@ -16,7 +16,8 @@ FIG_W, FIG_H = 7.2, 4.8
 FIG_DPI = 220
 FIG_W_COMPACT, FIG_H_COMPACT = 6.8, 4.5
 FIG_DPI_COMPACT = 280
-FIG_W_DASHBOARD, FIG_H_DASHBOARD = 4.85, 3.25
+FIG_W_DASHBOARD, FIG_H_DASHBOARD = 3.9, 2.6
+FIG_W_DASHBOARD_LG, FIG_H_DASHBOARD_LG = 6.2, 4.15
 FIG_DPI_DASHBOARD = 175
 MAP_REF_WIDTH = 7.2
 FIELD_X, FIELD_Y = 120.0, 80.0
@@ -44,7 +45,14 @@ XT_MAP_REF_WIDTH = 7.8
 XT_MAP_COLOR_PERCENTILE = (5.0, 95.0)
 
 
-def _resolve_figsize(*, compact: bool = True, dashboard: bool = False) -> tuple[tuple[float, float], int]:
+def _resolve_figsize(
+    *,
+    compact: bool = True,
+    dashboard: bool = False,
+    dashboard_large: bool = False,
+) -> tuple[tuple[float, float], int]:
+    if dashboard_large:
+        return (FIG_W_DASHBOARD_LG, FIG_H_DASHBOARD_LG), FIG_DPI_DASHBOARD
     if dashboard:
         return (FIG_W_DASHBOARD, FIG_H_DASHBOARD), FIG_DPI_DASHBOARD
     if compact:
@@ -135,9 +143,12 @@ def draw_all_completed_passes_map(
     *,
     compact: bool = True,
     dashboard: bool = False,
+    dashboard_large: bool = False,
 ):
     """Every completed pass drawn on the pitch (origin marker + faint arrow)."""
-    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
+    figsize, dpi = _resolve_figsize(
+        compact=compact, dashboard=dashboard, dashboard_large=dashboard_large,
+    )
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
@@ -201,9 +212,12 @@ def draw_impact_pass_map(
     *,
     compact: bool = True,
     dashboard: bool = False,
+    dashboard_large: bool = False,
 ):
     """Impact passes only — same visual language as the legacy pass map."""
-    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
+    figsize, dpi = _resolve_figsize(
+        compact=compact, dashboard=dashboard, dashboard_large=dashboard_large,
+    )
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
@@ -253,9 +267,12 @@ def draw_pass_destination_heatmap(
     *,
     compact: bool = True,
     dashboard: bool = False,
+    dashboard_large: bool = False,
 ):
     """12×8 heatmap of completed impact pass end locations."""
-    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
+    figsize, dpi = _resolve_figsize(
+        compact=compact, dashboard=dashboard, dashboard_large=dashboard_large,
+    )
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)

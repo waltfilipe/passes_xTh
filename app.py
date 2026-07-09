@@ -933,23 +933,25 @@ def render_player_layout(player: dict, passes) -> None:
         if passes is None or passes.empty:
             st.warning("Sem passes para este jogador.")
         else:
+            map_top_l, map_top_r = st.columns(2, gap="small")
+            with map_top_l:
+                fig_impact = draw_impact_pass_map(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_impact, clear_figure=True, use_container_width=True)
+            with map_top_r:
+                fig_dest = draw_pass_destination_heatmap(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_dest, clear_figure=True, use_container_width=True)
+
             fig_all = draw_all_completed_passes_map(
                 passes,
                 player["player_name"],
                 team_label,
-                dashboard=True,
+                dashboard_large=True,
             )
-            st.pyplot(fig_all, clear_figure=True, use_container_width=False)
-
-            fig = draw_impact_pass_map(
-                passes, player["player_name"], team_label, dashboard=True,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=False)
-
-            fig_heat = draw_pass_destination_heatmap(
-                passes, player["player_name"], team_label, dashboard=True,
-            )
-            st.pyplot(fig_heat, clear_figure=True, use_container_width=False)
+            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
 
     with col_side:
         st.markdown(sidebar_html, unsafe_allow_html=True)
