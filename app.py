@@ -34,6 +34,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import passes_engine as pe
+from heuristic_scoring import GROUP_COLORS, position_group_label
 sim = _load_similarity_engine()
 from comparison_config import (
     CLASSIFICATION_MODEL_DEFAULT,
@@ -321,16 +322,16 @@ st.markdown(
     }
     .pres-mini-card h4 { margin: 0 0 0.3rem 0; color: #93c5fd; font-size: 0.92rem; }
     .pres-mini-card p { margin: 0; color: #94a3b8; font-size: 0.84rem; line-height: 1.42; }
-    .pres-layout-demo {
-        display: grid;
-        grid-template-columns: 1.68fr 0.72fr;
-        gap: 0.65rem;
-        align-items: stretch;
-    }
     .pres-grid-demo {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 0.35rem;
+        gap: 0.12rem;
+    }
+    .pres-layout-demo {
+        display: grid;
+        grid-template-columns: 1.68fr 0.72fr;
+        gap: 0.45rem;
+        align-items: stretch;
     }
     .pres-blur-tile {
         position: relative;
@@ -358,7 +359,7 @@ st.markdown(
         align-items: center;
         text-align: center;
         padding: 0.7rem 0.8rem;
-        background: linear-gradient(180deg, rgba(10,14,24,0.35) 0%, rgba(10,14,24,0.88) 100%);
+        background: rgba(0, 0, 0, 0.84);
     }
     .pres-blur-overlay strong {
         color: #f1f5f9;
@@ -392,10 +393,47 @@ st.markdown(
     .pres-blur-overlay-side {
         justify-content: center;
         padding: 1.1rem;
+        background: rgba(0, 0, 0, 0.9);
     }
     .pres-blur-overlay-side strong { font-size: 1rem; max-width: 14rem; }
     .pres-blur-overlay-side p { font-size: 0.82rem; max-width: 15rem; }
     .pres-card-sim { border-color: #1e3a5f; }
+    .ranking-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.85rem;
+        margin-top: 0.35rem;
+    }
+    @media (max-width: 1100px) {
+        .ranking-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 720px) {
+        .ranking-grid { grid-template-columns: 1fr; }
+    }
+    .ranking-card-wrap {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    }
+    .ranking-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.72rem 0.9rem;
+        border-bottom: 1px solid #243049;
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #e2e8f0;
+    }
+    .ranking-card-head span {
+        font-size: 0.72rem;
+        color: #64748b;
+        font-weight: 600;
+    }
     .pres-step {
         display: flex;
         gap: 0.75rem;
@@ -733,6 +771,97 @@ def _sync_player_selection(
     if qp and qp in players_by_id:
         st.session_state["map_player_id"] = qp
         st.session_state[SELECTBOX_KEY] = label_by_id[qp]
+
+
+def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None) -> str:
+    body = []
+    for row in rows:
+        pid = html.escape(str(row["player_id"]))
+        rating_txt = fmt_rating_score(float(row["Rating"]))
+        sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
+        body.append(
+            f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
+            f"<td>{html.escape(str(row['Jogador']))}</td>"
+            f"<td class='team'>{html.escape(str(row['Time']))}</td>"
+            f'<td class="rating">{rating_txt}</td>'
+            "</tr>"
+        )
+    return (
+        '<table class="rx"><thead><tr>'
+        f'{"".join(f"<th>{html.escape(c)}</th>" for c in RATING_COLUMNS)}'
+        f"</tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+def render_rating_board(
+    groups: list[tuple[str, list[dict]]],
+    *,
+    selected_player_id: str | None,
+) -> None:
+    if not groups:
+        st.info("Nenhum jogador elegível para ranking.")
+        return
+
+    cards = []
+    max_rows = 0
+    for group, rows in groups:
+        max_rows = max(max_rows, len(rows))
+        accent = GROUP_COLORS.get(group, "#60a5fa")
+        label = position_group_label(group)
+        cards.append(
+            f'<div class="ranking-card-wrap" style="border-top:3px solid {accent}">'
+            f'<div class="ranking-card-head">{html.escape(label)}'
+            f"<span>{len(rows)} jogadores</span></div>"
+            f"{_rating_table_rows_html(rows, selected_player_id=selected_player_id)}"
+            "</div>"
+        )
+
+    page = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#e8edf5;background:transparent}}
+.ranking-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:0.85rem}}
+@media (max-width:1100px){{.ranking-grid{{grid-template-columns:repeat(2,1fr)}}}}
+@media (max-width:720px){{.ranking-grid{{grid-template-columns:1fr}}}}
+.ranking-card-wrap{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);
+  border:1px solid #2a3550;border-radius:12px;overflow:hidden;
+  box-shadow:0 8px 24px rgba(0,0,0,0.22)}}
+.ranking-card-head{{display:flex;align-items:center;justify-content:space-between;
+  padding:0.72rem 0.9rem;border-bottom:1px solid #243049;font-size:0.82rem;font-weight:700;
+  letter-spacing:0.04em;text-transform:uppercase;color:#e2e8f0}}
+.ranking-card-head span{{font-size:0.72rem;color:#64748b;font-weight:600}}
+.rx{{width:100%;border-collapse:collapse;font-size:0.86rem}}
+.rx th,.rx td{{padding:8px 10px;text-align:left;vertical-align:middle}}
+.rx th{{background:#141b2d;color:#8fa3bf;font-weight:600;font-size:0.68rem;
+  letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #2f3b56}}
+.rx td{{border-bottom:1px solid #232d42}}
+.rx tr.row{{cursor:pointer;transition:background .15s ease}}
+.rx tr.row:hover td{{background:#1a2238}}
+.rx tr.row.sel td{{background:#1c3354}}
+.rx tr.row.sel td:first-child{{box-shadow:inset 3px 0 0 #60a5fa}}
+.rx tr:last-child td{{border-bottom:none}}
+.team{{color:#9fb0c7;font-size:0.8rem}}
+.rating{{font-weight:700;color:#dbeafe;text-align:right}}
+</style>
+<script>
+function pickPlayer(pid) {{
+  try {{
+    const base = window.parent !== window ? window.parent : window;
+    const url = new URL(base.location.href);
+    url.searchParams.set("player_id", pid);
+    base.location.href = url.toString();
+  }} catch (e) {{
+    const url = new URL(window.location.href);
+    url.searchParams.set("player_id", pid);
+    window.location.href = url.toString();
+  }}
+}}
+</script></head><body>
+<div class="ranking-grid">{"".join(cards)}</div>
+</body></html>"""
+    height = min(44 * max_rows + 88, 920)
+    components.html(page, height=height, scrolling=False)
 
 
 def render_rating_table(
@@ -1195,12 +1324,14 @@ def render_map_section(
 
 
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
-    st.subheader("Rating por grupo de posição")
-    st.caption(
-        "Rating = média das notas por métrica no grupo (1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        f"Elegível: >{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% dos passes do grupo. "
-        "Fora do pool: rating comparado aos aptos ao selecionar o jogador."
+    st.markdown(
+        '<div class="pres-card"><h4>Ranking por grupo de posição</h4>'
+        "<p>Rating = média das notas por métrica no grupo (1º = 9,0 · mediano = 6,0 · último = 3,0). "
+        f"Elegível: &gt;{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% "
+        "dos passes do grupo. Clique em um jogador para abrir no Dashboard.</p></div>",
+        unsafe_allow_html=True,
     )
+    groups: list[tuple[str, list[dict]]] = []
     for group in POSITION_GROUPS_ORDER:
         subset = sorted(
             [p for p in rated if p["position_group"] == group],
@@ -1209,21 +1340,18 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
         )[:RATING_TOP_N]
         if not subset:
             continue
-        with st.expander(f"{group} ({len(subset)})", expanded=group == "Zagueiros"):
-            rows = [
-                {
-                    "player_id": p["player_id"],
-                    "Jogador": p["player_name"],
-                    "Time": p["team"],
-                    "Rating": p["pass_rating"],
-                    "metric_ranks": p.get("metric_ranks", {}),
-                }
-                for p in subset
-            ]
-            render_rating_table(
-                rows,
-                selected_player_id=selected_player_id,
-            )
+        rows = [
+            {
+                "player_id": p["player_id"],
+                "Jogador": p["player_name"],
+                "Time": p["team"],
+                "Rating": p["pass_rating"],
+                "metric_ranks": p.get("metric_ranks", {}),
+            }
+            for p in subset
+        ]
+        groups.append((group, rows))
+    render_rating_board(groups, selected_player_id=selected_player_id)
 
 
 def _group_players_by_position_group(players: list[dict]) -> dict[str, list[dict]]:
@@ -1454,7 +1582,7 @@ def render_presentation_tab(
         '<div class="pres-mini-card"><h4>Ranking</h4>'
         "<p>Tabelas por grupo de posição. Clique em um jogador para abrir sua análise no Dashboard.</p></div>"
         '<div class="pres-mini-card"><h4>Similaridade</h4>'
-        "<p>Compare jogadores entre Série B e Série A na mesma posição detalhada via z-score.</p></div>"
+        "<p>Compare jogadores entre Série B e Série A no mesmo grupo agregado (Zagueiro, Meio-campista, Extremo, Atacante).</p></div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1467,20 +1595,13 @@ def render_presentation_tab(
         if not player.get("eligible_for_rating"):
             group = str(player.get("position_group") or "—")
             player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
-        player_name = html.escape(str(player.get("player_name", "Jogador")))
-        team_name = html.escape(str(player.get("team", "—")))
-        st.markdown(
-            f'<div class="pres-card"><h4>Exemplo · {player_name}</h4>'
-            f"<p>Prévia explicativa do Dashboard com dados de <strong>{team_name}</strong>. "
-            "Os visuais ficam em blur — o foco é entender o que cada bloco representa.</p></div>",
-            unsafe_allow_html=True,
-        )
         _render_presentation_blur_demo(player, ex_passes)
 
     st.markdown(
         '<div class="pres-card pres-card-sim"><h4>Como funciona a similaridade</h4>'
         "<p>Selecione um jogador de uma liga e o sistema busca os <strong>10 mais parecidos</strong> "
-        "na outra liga, na <strong>mesma posição detalhada</strong>.</p>"
+        "na outra liga, no <strong>mesmo grupo de posição</strong> "
+        "(Zagueiro, Lateral, Meio-campista, Extremo ou Atacante).</p>"
         "<p style='margin-top:0.55rem'>O ranking usa <strong>distância euclidiana ponderada em z-scores</strong> "
         "das métricas de passe no pool da posição. Quanto menor a distância, maior a similaridade.</p>"
         "<p style='margin-top:0.55rem'>Ao clicar em um similar, você vê mapas de origem lado a lado e uma tabela "
@@ -1663,9 +1784,9 @@ def _render_similarity_results_tab(
 
     st.markdown("#### Comparação")
     st.caption(
-        f"Percentis na posição detalhada · ranks no grupo · ▲ verde = acima · ▼ vermelho = abaixo "
-        f"({html.escape(target_pos)} · {html.escape(target_league)} vs "
-        f"{html.escape(similar_pos)} · {html.escape(similar_league)})."
+        f"Percentis no grupo {html.escape(position_group_label(target_pos))} · ranks no grupo · "
+        f"▲ verde = acima · ▼ vermelho = abaixo "
+        f"({html.escape(target_league)} vs {html.escape(similar_league)})."
     )
 
     _render_comparison_maps_row(
@@ -1730,7 +1851,7 @@ def render_similarity_section(
     st.caption(
         f"Selecione um jogador da {'Série B' if sb_to_sa else 'Série A'}; "
         f"a tabela mostra os top {SIMILARITY_TOP_K} da {'Série A' if sb_to_sa else 'Série B'} "
-        "na mesma posição detalhada. Clique em uma linha para comparar."
+        "no mesmo grupo de posição. Clique em uma linha para comparar."
     )
 
     if not all_players:
@@ -1788,30 +1909,33 @@ def render_similarity_section(
         target_passes = passes_by_player_sb.get(target_id)
         pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
         pool_passes = serie_a_passes
-        pool_label = f"Série A · {search_pos or '—'}"
+        pool_label = f"Série A · {position_group_label(search_pos) or '—'}"
         target_league = "Série B"
     else:
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
         pool = sim.similarity_search_pool(sb_by_pos, search_pos)
         pool_passes = passes_by_player_sb
-        pool_label = f"Série B · {search_pos or '—'}"
+        pool_label = f"Série B · {position_group_label(search_pos) or '—'}"
         target_league = "Série A"
 
     if not search_pos:
-        st.warning("Posição inválida para comparação (goleiros são excluídos).")
+        st.warning("Grupo de posição inválido para comparação (goleiros são excluídos).")
         return
 
     if not pool:
         st.warning(
-            f"Nenhum jogador elegível na posição **{html.escape(search_pos)}** em {pool_label.split(' · ')[0]}."
+            f"Nenhum jogador elegível no grupo **{html.escape(position_group_label(search_pos))}** "
+            f"em {pool_label.split(' · ')[0]}."
         )
         return
 
+    group_label = position_group_label(search_pos)
     st.markdown(
         f"**{html.escape(str(target.get('player_name', '—')))}** · "
         f"{html.escape(str(target.get('team', '—')))} · "
         f"{html.escape(str(target.get('position', '—')))} · "
+        f"**{html.escape(group_label)}** · "
         f"{html.escape(target_league)} → pool **{html.escape(pool_label)}** ({len(pool)} jogadores)",
         unsafe_allow_html=True,
     )

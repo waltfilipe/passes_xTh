@@ -51,7 +51,7 @@ SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 SEASON_ALL_BR_FULL_CSV_PATH = Path(__file__).resolve().parent / "season_all_brfull.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 37
+DATA_CACHE_VERSION = 38
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -1603,7 +1603,9 @@ def metric_tooltip(key: str) -> str:
 
 
 def rank_in_group_label(rank: int, position_group: str | None) -> str:
-    group = str(position_group or "—").strip()
+    from heuristic_scoring import position_group_label
+
+    group = position_group_label(position_group)
     return f"{int(rank)}º em {group}"
 
 

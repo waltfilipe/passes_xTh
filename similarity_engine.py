@@ -426,26 +426,19 @@ def find_similar_option_c(
 
 
 def player_search_position(player: dict) -> str | None:
-    """Normalized detailed position used for cross-league similarity pools."""
-    pos = str(player.get("position") or "").strip().upper()
-    if not pos or pos in EXCLUDED_SEARCH_POSITIONS:
+    """Aggregated position group for cross-league similarity pools."""
+    grp = player.get("position_group")
+    if not grp:
         return None
-    return pos
-
-
-def outfield_players(players: list[dict]) -> list[dict]:
-    """All non-goalkeeper players eligible for similarity pools."""
-    return [p for p in players if player_search_position(p) is not None]
+    text = str(grp).strip()
+    if not text or text == "—" or text not in POSITION_GROUPS_ORDER:
+        return None
+    return text
 
 
 def group_players_by_detailed_position(players: list[dict]) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {}
-    for player in players:
-        pos = player_search_position(player)
-        if pos is None:
-            continue
-        out.setdefault(pos, []).append(player)
-    return out
+    """Group players by aggregated position (Zagueiros, Extremos, …)."""
+    return group_players_by_position(players)
 
 
 def similarity_search_pool(

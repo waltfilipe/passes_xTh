@@ -134,13 +134,31 @@ _POSITION_TO_GROUP: dict[str, str] = {
     "LCF": "Atacantes",
 }
 
-GROUP_COLORS = {
+POSITION_GROUP_LABELS: dict[str, str] = {
+    "Zagueiros": "Zagueiro",
+    "Laterais": "Lateral",
+    "Meio-campistas": "Meio-campista",
+    "Extremos": "Extremo",
+    "Atacantes": "Atacante",
+}
+
+_GROUP_COLORS = {
     "Zagueiros": "#60a5fa",
     "Laterais": "#34d399",
     "Meio-campistas": "#fbbf24",
     "Extremos": "#f472b6",
     "Atacantes": "#f87171",
 }
+
+
+GROUP_COLORS = _GROUP_COLORS
+
+
+def position_group_label(group: str | None) -> str:
+    if not group:
+        return "—"
+    text = str(group).strip()
+    return POSITION_GROUP_LABELS.get(text, text)
 
 
 def position_group(short_pos: str | None) -> str | None:

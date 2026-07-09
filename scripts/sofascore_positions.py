@@ -63,6 +63,33 @@ FWD_LINE_BY_COUNT: dict[int, list[str]] = {
     3: ["LW", "ST", "RW"],
 }
 
+# Pitch y grows toward the right touchline in our data — mirror L↔R labels.
+_LATERAL_MIRROR: dict[str, str] = {
+    "LM": "RM",
+    "RM": "LM",
+    "LW": "RW",
+    "RW": "LW",
+    "LB": "RB",
+    "RB": "LB",
+    "LWB": "RWB",
+    "RWB": "LWB",
+    "LCB": "RCB",
+    "RCB": "LCB",
+    "LCM": "RCM",
+    "RCM": "LCM",
+    "LDM": "RDM",
+    "RDM": "LDM",
+    "DL": "DR",
+    "DR": "DL",
+    "AML": "AMR",
+    "AMR": "AML",
+}
+
+
+def mirror_lateral_position(pos: str) -> str:
+    key = str(pos or "").strip().upper()
+    return _LATERAL_MIRROR.get(key, key)
+
 
 def normalize_sofascore_position(raw: str | None, *, default: str = "CM") -> str:
     """Map a SofaScore position string to an app short code."""
@@ -71,7 +98,8 @@ def normalize_sofascore_position(raw: str | None, *, default: str = "CM") -> str
     text = str(raw).strip().upper()
     if not text:
         return default
-    return SOFASCORE_TO_APP.get(text, text)
+    mapped = SOFASCORE_TO_APP.get(text, text)
+    return mirror_lateral_position(mapped)
 
 
 def is_coarse_position(raw: str | None) -> bool:
