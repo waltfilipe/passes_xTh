@@ -1,4 +1,4 @@
-"""Passes xTh — Série B: rating por posição e mapa de passes de impacto."""
+"""Scout de Passes — Série B: rating por posição e mapa de passes de impacto."""
 
 from __future__ import annotations
 
@@ -88,7 +88,11 @@ def fmt_rating_score(pass_rating) -> str:
         return "—"
     return f"{float(pass_rating) * 10.0:.1f}"
 
-st.set_page_config(page_title="Passes xTh", layout="wide", initial_sidebar_state="collapsed")
+APP_NAME = "Scout de Passes"
+APP_LEAGUE = "Série B"
+PRES_DEMO_KEY = "pres_active_demo"
+
+st.set_page_config(page_title=f"{APP_NAME} | {APP_LEAGUE}", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     """
@@ -322,6 +326,125 @@ st.markdown(
     }
     .pres-mini-card h4 { margin: 0 0 0.3rem 0; color: #93c5fd; font-size: 0.92rem; }
     .pres-mini-card p { margin: 0; color: #94a3b8; font-size: 0.84rem; line-height: 1.42; }
+    .pres-feature-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 0.95rem 1rem 0.55rem;
+        min-height: 7.2rem;
+        margin-bottom: 0.35rem;
+    }
+    .pres-feature-card.open {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.22);
+    }
+    .pres-feature-card h4 {
+        margin: 0 0 0.35rem 0;
+        color: #93c5fd;
+        font-size: 0.95rem;
+    }
+    .pres-feature-card p {
+        margin: 0;
+        color: #94a3b8;
+        font-size: 0.82rem;
+        line-height: 1.4;
+    }
+    .pres-demo-wrap { margin: 0.15rem 0 1rem 0; }
+    .pres-blur-panel-wide {
+        min-height: 300px;
+    }
+    .pres-flow {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.65rem;
+    }
+    @media (max-width: 900px) {
+        .pres-flow { grid-template-columns: repeat(2, 1fr); }
+    }
+    .pres-flow-step {
+        text-align: center;
+        padding: 0.55rem 0.35rem;
+    }
+    .pres-flow-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.65rem;
+        height: 1.65rem;
+        border-radius: 999px;
+        background: #1e3a8a;
+        color: #dbeafe;
+        font-size: 0.8rem;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
+    }
+    .pres-flow-step strong {
+        display: block;
+        color: #e2e8f0;
+        font-size: 0.86rem;
+        margin-bottom: 0.2rem;
+    }
+    .pres-flow-step span.desc {
+        color: #94a3b8;
+        font-size: 0.76rem;
+        line-height: 1.35;
+    }
+    .pres-sim-mock {
+        padding: 1rem 1.1rem;
+        color: #cbd5e1;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .pres-sim-mock-head {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        margin-bottom: 0.65rem;
+    }
+    .pres-sim-mock-field {
+        background: #0f172a;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 0.55rem 0.75rem;
+        font-size: 0.84rem;
+        color: #94a3b8;
+        margin-bottom: 0.75rem;
+    }
+    .pres-sim-mock-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+        margin-bottom: 0.85rem;
+    }
+    .pres-sim-mock-table th,
+    .pres-sim-mock-table td {
+        padding: 7px 9px;
+        border-bottom: 1px solid #243049;
+        text-align: left;
+    }
+    .pres-sim-mock-table th {
+        color: #8fa3bf;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .pres-sim-mock-compare {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+    }
+    .pres-sim-mock-map {
+        background: #0c1220;
+        border: 1px solid #2a3550;
+        border-radius: 8px;
+        aspect-ratio: 3 / 2;
+    }
+    .pres-sim-mock-metrics {
+        margin-top: 0.75rem;
+        background: #111827;
+        border: 1px solid #2a3550;
+        border-radius: 8px;
+        height: 4.5rem;
+    }
     .pres-grid-demo {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -647,7 +770,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Passes xTh — Série B")
+st.title(f"{APP_NAME} · {APP_LEAGUE}")
 
 RATING_COLUMNS = ["Jogador", "Time", "Rating"]
 SELECTBOX_KEY = "map_player_select"
@@ -807,6 +930,85 @@ def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None)
     )
 
 
+_RANKING_EMBED_CSS = """
+.ranking-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0.85rem}
+@media (max-width:1100px){.ranking-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:720px){.ranking-grid{grid-template-columns:1fr}}
+.ranking-card-wrap{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);
+  border:1px solid #2a3550;border-radius:12px;overflow:hidden;
+  box-shadow:0 8px 24px rgba(0,0,0,0.22)}
+.ranking-card-head{display:flex;align-items:center;justify-content:space-between;
+  padding:0.72rem 0.9rem;border-bottom:1px solid #243049;font-size:0.82rem;font-weight:700;
+  letter-spacing:0.04em;text-transform:uppercase;color:#e2e8f0}
+.ranking-card-head span{font-size:0.72rem;color:#64748b;font-weight:600}
+.rx{width:100%;border-collapse:collapse;font-size:0.86rem}
+.rx th,.rx td{padding:8px 10px;text-align:left;vertical-align:middle}
+.rx th{background:#141b2d;color:#8fa3bf;font-weight:600;font-size:0.68rem;
+  letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #2f3b56}
+.rx td{border-bottom:1px solid #232d42}
+.rx tr.row{cursor:default}
+.rx tr:last-child td{border-bottom:none}
+.team{color:#9fb0c7;font-size:0.8rem}
+.rating{font-weight:700;color:#dbeafe;text-align:right}
+"""
+
+
+def _ranking_grid_html(
+    groups: list[tuple[str, list[dict]]],
+    *,
+    selected_player_id: str | None = None,
+) -> str:
+    cards = []
+    for group, rows in groups:
+        accent = GROUP_COLORS.get(group, "#60a5fa")
+        label = position_group_label(group)
+        cards.append(
+            f'<div class="ranking-card-wrap" style="border-top:3px solid {accent}">'
+            f'<div class="ranking-card-head">{html.escape(label)}'
+            f"<span>{len(rows)} jogadores</span></div>"
+            f"{_rating_table_rows_html(rows, selected_player_id=selected_player_id)}"
+            "</div>"
+        )
+    return f"<style>{_RANKING_EMBED_CSS}</style><div class=\"ranking-grid\">{''.join(cards)}</div>"
+
+
+def _rating_board_iframe_height(groups: list[tuple[str, list[dict]]]) -> int:
+    card_heights = [48 + 44 * len(rows) for _, rows in groups]
+    cols_per_row = 3
+    grid_gap = 14
+    total_height = 0
+    for row_start in range(0, len(card_heights), cols_per_row):
+        row_heights = card_heights[row_start : row_start + cols_per_row]
+        total_height += max(row_heights)
+        if row_start + cols_per_row < len(card_heights):
+            total_height += grid_gap
+    return min(total_height + 20, 2200)
+
+
+def _rating_groups_from_rated(rated: list[dict]) -> list[tuple[str, list[dict]]]:
+    groups: list[tuple[str, list[dict]]] = []
+    for group in POSITION_GROUPS_ORDER:
+        subset = sorted(
+            [p for p in rated if p["position_group"] == group],
+            key=lambda p: p.get("pass_rating", 0),
+            reverse=True,
+        )[:RATING_TOP_N]
+        if not subset:
+            continue
+        rows = [
+            {
+                "player_id": p["player_id"],
+                "Jogador": p["player_name"],
+                "Time": p["team"],
+                "Rating": p["pass_rating"],
+                "metric_ranks": p.get("metric_ranks", {}),
+            }
+            for p in subset
+        ]
+        groups.append((group, rows))
+    return groups
+
+
 def render_rating_board(
     groups: list[tuple[str, list[dict]]],
     *,
@@ -816,57 +1018,17 @@ def render_rating_board(
         st.info("Nenhum jogador elegível para ranking.")
         return
 
-    cards = []
-    card_heights: list[int] = []
-    for group, rows in groups:
-        accent = GROUP_COLORS.get(group, "#60a5fa")
-        label = position_group_label(group)
-        card_heights.append(48 + 44 * len(rows))
-        cards.append(
-            f'<div class="ranking-card-wrap" style="border-top:3px solid {accent}">'
-            f'<div class="ranking-card-head">{html.escape(label)}'
-            f"<span>{len(rows)} jogadores</span></div>"
-            f"{_rating_table_rows_html(rows, selected_player_id=selected_player_id)}"
-            "</div>"
-        )
-
-    cols_per_row = 3
-    grid_gap = 14
-    total_height = 0
-    for row_start in range(0, len(card_heights), cols_per_row):
-        row_heights = card_heights[row_start : row_start + cols_per_row]
-        total_height += max(row_heights)
-        if row_start + cols_per_row < len(card_heights):
-            total_height += grid_gap
-    height = min(total_height + 20, 2200)
-
+    height = _rating_board_iframe_height(groups)
+    grid_html = _ranking_grid_html(groups, selected_player_id=selected_player_id)
     page = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}
 body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   color:#e8edf5;background:transparent}}
-.ranking-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:0.85rem}}
-@media (max-width:1100px){{.ranking-grid{{grid-template-columns:repeat(2,1fr)}}}}
-@media (max-width:720px){{.ranking-grid{{grid-template-columns:1fr}}}}
-.ranking-card-wrap{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);
-  border:1px solid #2a3550;border-radius:12px;overflow:hidden;
-  box-shadow:0 8px 24px rgba(0,0,0,0.22)}}
-.ranking-card-head{{display:flex;align-items:center;justify-content:space-between;
-  padding:0.72rem 0.9rem;border-bottom:1px solid #243049;font-size:0.82rem;font-weight:700;
-  letter-spacing:0.04em;text-transform:uppercase;color:#e2e8f0}}
-.ranking-card-head span{{font-size:0.72rem;color:#64748b;font-weight:600}}
-.rx{{width:100%;border-collapse:collapse;font-size:0.86rem}}
-.rx th,.rx td{{padding:8px 10px;text-align:left;vertical-align:middle}}
-.rx th{{background:#141b2d;color:#8fa3bf;font-weight:600;font-size:0.68rem;
-  letter-spacing:0.05em;text-transform:uppercase;border-bottom:1px solid #2f3b56}}
-.rx td{{border-bottom:1px solid #232d42}}
 .rx tr.row{{cursor:pointer;transition:background .15s ease}}
 .rx tr.row:hover td{{background:#1a2238}}
 .rx tr.row.sel td{{background:#1c3354}}
 .rx tr.row.sel td:first-child{{box-shadow:inset 3px 0 0 #60a5fa}}
-.rx tr:last-child td{{border-bottom:none}}
-.team{{color:#9fb0c7;font-size:0.8rem}}
-.rating{{font-weight:700;color:#dbeafe;text-align:right}}
 </style>
 <script>
 function pickPlayer(pid) {{
@@ -882,9 +1044,8 @@ function pickPlayer(pid) {{
   }}
 }}
 </script></head><body>
-<div class="ranking-grid">{"".join(cards)}</div>
+{grid_html}
 </body></html>"""
-    height = min(total_height + 20, 2200)
     components.html(page, height=height, scrolling=height >= 2200)
 
 
@@ -1355,27 +1516,7 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
         "dos passes do grupo. Clique em um jogador para abrir no Dashboard.</p></div>",
         unsafe_allow_html=True,
     )
-    groups: list[tuple[str, list[dict]]] = []
-    for group in POSITION_GROUPS_ORDER:
-        subset = sorted(
-            [p for p in rated if p["position_group"] == group],
-            key=lambda p: p.get("pass_rating", 0),
-            reverse=True,
-        )[:RATING_TOP_N]
-        if not subset:
-            continue
-        rows = [
-            {
-                "player_id": p["player_id"],
-                "Jogador": p["player_name"],
-                "Time": p["team"],
-                "Rating": p["pass_rating"],
-                "metric_ranks": p.get("metric_ranks", {}),
-            }
-            for p in subset
-        ]
-        groups.append((group, rows))
-    render_rating_board(groups, selected_player_id=selected_player_id)
+    render_rating_board(_rating_groups_from_rated(rated), selected_player_id=selected_player_id)
 
 
 def _comparison_metrics_html(
@@ -1557,71 +1698,165 @@ def _render_presentation_blur_demo(player: dict, passes) -> None:
     st.html(demo_html, width="stretch")
 
 
+PRES_FEATURE_SPECS: tuple[tuple[str, str, str], ...] = (
+    (
+        "dashboard",
+        "Dashboard",
+        "Grid 2×2 de mapas à esquerda e cards de rating, participação e pilares à direita.",
+    ),
+    (
+        "ranking",
+        "Ranking",
+        "Tabelas por grupo de posição — clique em um jogador para abrir no Dashboard.",
+    ),
+    (
+        "similarity",
+        "Similaridade",
+        "Compare atletas entre Série B e Série A na mesma posição (lado respeitado).",
+    ),
+)
+
+
+def _toggle_pres_demo(section: str) -> None:
+    current = st.session_state.get(PRES_DEMO_KEY)
+    st.session_state[PRES_DEMO_KEY] = None if current == section else section
+
+
+def _render_pres_feature_cards() -> None:
+    cols = st.columns(3)
+    for col, (key, title, desc) in zip(cols, PRES_FEATURE_SPECS):
+        with col:
+            is_open = st.session_state.get(PRES_DEMO_KEY) == key
+            state_cls = " open" if is_open else ""
+            st.markdown(
+                f'<div class="pres-feature-card{state_cls}">'
+                f"<h4>{html.escape(title)}</h4>"
+                f"<p>{html.escape(desc)}</p></div>",
+                unsafe_allow_html=True,
+            )
+            arrow = "▼ Ocultar modelo" if is_open else "▶ Ver modelo"
+            if st.button(arrow, key=f"pres_demo_btn_{key}", use_container_width=True):
+                _toggle_pres_demo(key)
+
+
+def _similarity_mock_inner_html() -> str:
+    table_rows = "".join(
+        f"<tr><td>{n}</td><td>Jogador {n}</td><td>Time</td><td>{90 - i * 4}%</td><td>{75 - i * 3}%</td></tr>"
+        for i, n in enumerate(range(1, 6), start=0)
+    )
+    return (
+        '<div class="pres-sim-mock">'
+        '<div class="pres-sim-mock-head">Similaridade B → A</div>'
+        '<div class="pres-sim-mock-field">Jogador Série B · selecione na lista</div>'
+        '<table class="pres-sim-mock-table"><thead><tr>'
+        "<th>#</th><th>Jogador</th><th>Time</th><th>Sim.</th><th>Origem</th>"
+        f"</tr></thead><tbody>{table_rows}</tbody></table>"
+        '<div class="pres-sim-mock-compare">'
+        '<div class="pres-sim-mock-map"></div><div class="pres-sim-mock-map"></div>'
+        "</div>"
+        '<div class="pres-sim-mock-metrics"></div>'
+        "</div>"
+    )
+
+
+def _render_presentation_similarity_demo() -> None:
+    demo_html = (
+        '<div class="pres-blur-panel pres-blur-panel-wide">'
+        f'<div class="pres-blur-back">{_similarity_mock_inner_html()}</div>'
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
+        "<strong>Similaridade B ↔ A</strong>"
+        "<p>Selecione um jogador de uma liga e veja os <strong>10 mais parecidos</strong> "
+        "na outra, na mesma posição (LB↔LB, LM↔LM; CB, CM e ST aglutinados).</p>"
+        "<p style='margin-top:0.45rem'>Ranking por z-scores das métricas de passe. "
+        "Ao clicar em um similar: mapas de origem lado a lado e percentis com setas ▲/▼.</p>"
+        "</div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+def _render_presentation_ranking_demo(groups: list[tuple[str, list[dict]]]) -> None:
+    if not groups:
+        st.info("Sem dados de ranking para demonstração.")
+        return
+    demo_groups = groups[:3]
+    inner = _ranking_grid_html(demo_groups)
+    demo_html = (
+        '<div class="pres-blur-panel pres-blur-panel-wide">'
+        f'<div class="pres-blur-back">{inner}</div>'
+        '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
+        "<strong>Ranking por grupo</strong>"
+        "<p>Tabelas por posição com rating (1º = 9,0 · mediano = 6,0). "
+        "Clique em um jogador para abrir sua análise completa no Dashboard.</p>"
+        "</div></div></div>"
+    )
+    st.html(demo_html, width="stretch")
+
+
+def _render_pres_flow_steps() -> None:
+    steps = [
+        ("Apresentação", "Entenda o layout e navegue pelos modelos."),
+        ("Dashboard", "Analise mapas e cards de qualquer jogador."),
+        ("Ranking", "Explore o ranking por grupo e abra jogadores no Dashboard."),
+        ("Similaridade", "Compare atletas entre Série B e Série A."),
+    ]
+    items = []
+    for idx, (title, text) in enumerate(steps, start=1):
+        items.append(
+            f'<div class="pres-flow-step">'
+            f'<div class="pres-flow-num">{idx}</div>'
+            f"<strong>{html.escape(title)}</strong>"
+            f'<span class="desc">{html.escape(text)}</span></div>'
+        )
+    st.markdown(
+        '<div class="pres-card"><h4 style="margin-bottom:0.75rem">Fluxo do app</h4>'
+        f'<div class="pres-flow">{"".join(items)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_presentation_tab(
     all_players: list[dict],
     passes_by_player: dict,
     players_by_id: dict[str, dict],
     pool_by_position: dict[str, list[dict]],
+    *,
+    rated: list[dict],
 ) -> None:
     st.markdown(
         '<div class="pres-card pres-card-hero">'
-        "<h4>Passes xTh — scouting de passes com expected threat</h4>"
+        f"<h4>{html.escape(APP_NAME)} — ameaça esperada por passe (xT)</h4>"
         "<p>Medimos a qualidade dos passes com um modelo de <strong>expected threat (xT)</strong>. "
         "Passes que aumentam a probabilidade de gol valem mais. O rating resume o jogador "
-        "frente aos pares da <strong>mesma posição</strong> na Série B.</p></div>",
+        f"frente aos pares da <strong>mesma posição</strong> na {html.escape(APP_LEAGUE)}.</p></div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        '<div class="pres-cards-row">'
-        '<div class="pres-mini-card"><h4>Dashboard</h4>'
-        "<p>Grid 2×2 de mapas à esquerda e cards à direita com rating, participação e pilares expansíveis.</p></div>"
-        '<div class="pres-mini-card"><h4>Ranking</h4>'
-        "<p>Tabelas por grupo de posição. Clique em um jogador para abrir sua análise no Dashboard.</p></div>"
-        '<div class="pres-mini-card"><h4>Similaridade</h4>'
-        "<p>Compare jogadores entre Série B e Série A no mesmo grupo agregado (Zagueiro, Meio-campista, Extremo, Atacante).</p></div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    _render_pres_feature_cards()
 
-    example = _presentation_example_player(all_players, passes_by_player)
-    if example:
-        ex_id = str(example["player_id"])
-        ex_passes = passes_by_player[ex_id]
-        player = dict(players_by_id.get(ex_id, example))
-        if not player.get("eligible_for_rating"):
-            group = str(player.get("position_group") or "—")
-            player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
-        _render_presentation_blur_demo(player, ex_passes)
+    active_demo = st.session_state.get(PRES_DEMO_KEY)
+    if active_demo:
+        st.markdown('<div class="pres-demo-wrap">', unsafe_allow_html=True)
+        if active_demo == "dashboard":
+            example = _presentation_example_player(all_players, passes_by_player)
+            if example:
+                ex_id = str(example["player_id"])
+                ex_passes = passes_by_player[ex_id]
+                player = dict(players_by_id.get(ex_id, example))
+                if not player.get("eligible_for_rating"):
+                    group = str(player.get("position_group") or "—")
+                    player = rate_player_vs_eligible_pool(player, pool_by_position.get(group, []))
+                _render_presentation_blur_demo(player, ex_passes)
+            else:
+                st.info("Sem jogador de exemplo para demonstrar o Dashboard.")
+        elif active_demo == "ranking":
+            _render_presentation_ranking_demo(_rating_groups_from_rated(rated))
+        elif active_demo == "similarity":
+            _render_presentation_similarity_demo()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown(
-        '<div class="pres-card pres-card-sim"><h4>Como funciona a similaridade</h4>'
-        "<p>Selecione um jogador de uma liga e o sistema busca os <strong>10 mais parecidos</strong> "
-        "na outra liga, na <strong>mesma posição</strong> "
-        "(lado respeitado: LB↔LB, LM↔LM; apenas CB, CM e ST aglutinam variantes).</p>"
-        "<p style='margin-top:0.55rem'>O ranking usa <strong>distância euclidiana ponderada em z-scores</strong> "
-        "das métricas de passe no pool da posição. Quanto menor a distância, maior a similaridade.</p>"
-        "<p style='margin-top:0.55rem'>Ao clicar em um similar, você vê mapas de origem lado a lado e uma tabela "
-        "com percentis e setas ▲/▼ comparando referência e candidato. A coluna de similaridade de origem "
-        "é informativa e não altera o ranking.</p></div>",
-        unsafe_allow_html=True,
-    )
-
-    steps = [
-        ("Apresentação", "Entenda o layout e a lógica de leitura."),
-        ("Dashboard", "Analise mapas e cards de qualquer jogador."),
-        ("Ranking", "Explore o ranking por grupo e abra jogadores no Dashboard."),
-        ("Similaridade", "Compare atletas entre Série B e Série A."),
-    ]
-    for idx, (title, text) in enumerate(steps, start=1):
-        st.markdown(
-            f'<div class="pres-card"><div class="pres-step">'
-            f'<span class="pres-step-num">{idx}</span>'
-            f"<div><strong>{html.escape(title)}</strong><br>"
-            f'<span style="color:#94a3b8;font-size:0.88rem">{html.escape(text)}</span></div>'
-            f"</div></div>",
-            unsafe_allow_html=True,
-        )
+    _render_pres_flow_steps()
 
 
 def _render_similarity_player_panel(
@@ -1981,7 +2216,9 @@ def main() -> None:
         ["Apresentação", "Dashboard", "Ranking", "Similaridade B->A", "Similaridade A->B"]
     )
     with tab_pres:
-        render_presentation_tab(all_players, passes_by_player, players_by_id, pool_by_position)
+        render_presentation_tab(
+            all_players, passes_by_player, players_by_id, pool_by_position, rated=rated,
+        )
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
     with tab_ranking:
