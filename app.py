@@ -368,6 +368,10 @@ st.markdown(
         justify-content: space-between;
         gap: 0.65rem;
     }
+    .grade-card-score {
+        flex-shrink: 0;
+        align-self: center;
+    }
     .grade-accordion-body {
         padding: 0.15rem 0.85rem 0.8rem;
         border-top: 1px solid #1f293f;
@@ -424,17 +428,14 @@ st.markdown(
         padding: 0.24rem 0;
     }
     .dashboard-sidebar-stack .grade-accordion {
-        flex: 1 1 0;
-        min-height: 2.65rem;
+        flex: 0 0 auto;
+        min-height: 0;
         margin-bottom: 0;
-        display: flex;
-        flex-direction: column;
     }
     .dashboard-sidebar-stack .grade-accordion summary {
         padding: 0.5rem 0.65rem;
-        flex: 1;
         align-items: center;
-        min-height: 2.65rem;
+        min-height: 0;
     }
     .dashboard-sidebar-stack .grade-card-title {
         font-size: 0.7rem;
@@ -938,7 +939,7 @@ def _section_grade_accordion_html(
     )
 
 
-def _dashboard_sidebar_page_html(player: dict) -> str:
+def _build_dashboard_sidebar_html(player: dict) -> str:
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         (
             "Participação",
@@ -966,79 +967,16 @@ def _dashboard_sidebar_page_html(player: dict) -> str:
         _section_grade_accordion_html(player, section_key, title, keys, open=(i == 0))
         for i, (section_key, title, _subtitle, keys) in enumerate(SCOUT_SECTION_SPECS)
     )
-    return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-*{{box-sizing:border-box}}
-body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  color:#e8edf5;background:transparent}}
-.sidebar-stack{{display:flex;flex-direction:column;gap:0.28rem}}
-.player-card{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);border:1px solid #2a3550;
-  border-radius:12px;padding:0.8rem 0.85rem;margin-bottom:0}}
-.player-card h3{{margin:0 0 0.15rem 0;color:#f1f5f9;font-size:1.05rem}}
-.player-card .sub{{color:#94a3b8;font-size:0.8rem;margin-bottom:0}}
-.rating-row{{display:flex;align-items:center;flex-wrap:wrap;gap:0.55rem;margin-top:0.75rem;margin-bottom:0}}
-.rating-box{{display:inline-flex;align-items:center;justify-content:center;min-width:76px;height:50px;
-  padding:0 12px;border-radius:8px;font-size:1.55rem;font-weight:800;border:1px solid rgba(255,255,255,0.16)}}
-.rating-warning-tip{{position:relative;display:inline-flex;align-items:center}}
-.rating-warning{{font-size:1.2rem;line-height:1;cursor:help;color:#fbbf24}}
-.rating-tip,.rank-tip,.section-rating-tip{{position:relative;display:inline-flex}}
-.rating-tipbox,.rank-tipbox{{display:none;position:absolute;z-index:100;left:50%;
-  bottom:calc(100% + 6px);transform:translateX(-50%);background:#111827;border:1px solid #3d4f6f;
-  border-radius:6px;padding:4px 8px;font-size:0.72rem;color:#e2e8f0;white-space:nowrap}}
-.rating-tip:hover .rating-tipbox,.rank-tip:hover .rank-tipbox,.section-rating-tip:hover .rating-tipbox,
-.rating-warning-tip:hover .rating-tipbox,.metric-tip:hover .metric-tipbox
-{{display:block}}
-.metric-tip{{position:relative;display:inline-flex;align-items:center;cursor:help;border-bottom:1px dotted #475569}}
-.metric-tipbox{{display:none;position:absolute;z-index:120;left:0;bottom:calc(100% + 6px);min-width:200px;
-  max-width:280px;background:#111827;border:1px solid #3d4f6f;border-radius:8px;padding:8px 10px;
-  font-size:0.72rem;font-weight:500;color:#e2e8f0;line-height:1.35}}
-.stat-section-row{{display:flex;justify-content:space-between;align-items:center;gap:0.6rem;
-  margin-top:0.7rem;margin-bottom:0.25rem}}
-.stat-section{{color:#93c5fd;font-size:0.74rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase}}
-.section-rating-pill{{display:inline-flex;align-items:center;justify-content:center;min-width:46px;
-  padding:3px 9px;border-radius:6px;font-size:0.76rem;font-weight:800}}
-.metric-line{{display:flex;justify-content:space-between;gap:0.75rem;padding:0.24rem 0;
-  border-bottom:1px solid #1f293f;font-size:0.88rem;color:#cbd5e1}}
-.metric-line:last-child{{border-bottom:none}}
-.metric-line .stat-val{{font-size:1.05rem;font-weight:700;color:#f8fafc}}
-.val-wrap{{display:inline-flex;align-items:center;gap:0.5rem}}
-.rank-badge{{display:inline-block;width:12px;height:12px;min-width:12px;border-radius:3px;
-  border:1px solid rgba(255,255,255,0.2);cursor:help}}
-.metric-rank-sub{{display:block;font-size:0.68rem;color:#64748b;margin-top:0.12rem}}
-.grade-accordion{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);border:1px solid #2a3550;
-  border-radius:10px;margin-bottom:0;overflow:hidden}}
-.grade-accordion summary{{list-style:none;cursor:pointer;padding:0.5rem 0.65rem;display:flex;
-  align-items:center;gap:0.55rem;min-height:2.65rem}}
-.grade-accordion summary::-webkit-details-marker{{display:none}}
-.grade-arrow{{color:#93c5fd;font-size:0.95rem;line-height:1;transition:transform .18s ease;
-  flex-shrink:0;width:0.85rem}}
-.grade-accordion[open] .grade-arrow{{transform:rotate(90deg)}}
-.grade-summary-main{{flex:1;min-width:0}}
-.grade-summary-top{{display:flex;align-items:center;justify-content:space-between;gap:0.65rem}}
-.grade-card-title{{color:#93c5fd;font-size:0.7rem;font-weight:700;letter-spacing:0.05em;
-  text-transform:uppercase;line-height:1.25}}
-.grade-card-rank{{margin-top:0.1rem;font-size:0.68rem;color:#64748b}}
-.grade-accordion-body{{padding:0.15rem 0.85rem 0.8rem;border-top:1px solid #1f293f}}
-.grade-accordion-body .metric-line:last-child{{border-bottom:none}}
-</style>
-<script>
-function sendHeight() {{
-  const h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
-  window.parent.postMessage({{type:"streamlit:setFrameHeight",height:h}},"*");
-}}
-new ResizeObserver(sendHeight).observe(document.body);
-window.addEventListener("load", sendHeight);
-document.addEventListener("toggle", sendHeight, true);
-</script></head><body>
-<div class="sidebar-stack dashboard-sidebar-stack">
-{general_card}
-{pillar_html}
-</div>
-</body></html>"""
+    return (
+        '<div class="sidebar-stack dashboard-sidebar-stack">'
+        f"{general_card}"
+        f"{pillar_html}"
+        "</div>"
+    )
 
 
 def render_dashboard_sidebar(player: dict) -> None:
-    components.html(_dashboard_sidebar_page_html(player), height=560, scrolling=False)
+    st.html(_build_dashboard_sidebar_html(player), width="stretch")
 
 
 def _section_grade_body_html(player: dict, keys: tuple[str, ...]) -> str:
