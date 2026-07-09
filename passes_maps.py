@@ -112,6 +112,82 @@ def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: f
     )
 
 
+COLOR_ALL_PASSES = "#64748b"
+COLOR_ALL_PASSES_END = "#94a3b8"
+ALL_PASS_ARROW_ALPHA = 0.22
+ALL_PASS_MARKER_SIZE = 4
+
+
+def draw_all_completed_passes_map(
+    passes,
+    player_name: str,
+    match_label: str = "todos os jogos",
+    *,
+    compact: bool = True,
+):
+    """Every completed pass drawn on the pitch (origin marker + faint arrow)."""
+    if compact:
+        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
+        dpi = FIG_DPI_COMPACT
+    else:
+        figsize = (FIG_W, FIG_H)
+        dpi = FIG_DPI
+
+    fig_w = figsize[0]
+    scale = _map_scale(fig_w)
+    fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
+
+    if passes is None or passes.empty:
+        subset = passes
+    else:
+        subset = passes[passes["is_won"].astype(bool)].copy()
+        if "has_end" in subset.columns:
+            with_end = subset[subset["has_end"].astype(bool)]
+            without_end = subset[~subset["has_end"].astype(bool)]
+        else:
+            with_end = subset
+            without_end = subset.iloc[0:0]
+
+    if subset is None or subset.empty:
+        ax.text(60, 40, "Sem passes completos", ha="center", va="center", color="white", fontsize=9)
+    else:
+        if not with_end.empty:
+            for row in with_end.itertuples(index=False):
+                _delicate_arrows(
+                    pitch, ax,
+                    row.x_start, row.y_start, row.x_end, row.y_end,
+                    COLOR_ALL_PASSES, scale, alpha=ALL_PASS_ARROW_ALPHA,
+                )
+        starts_x = subset["x_start"].to_numpy(dtype=float)
+        starts_y = subset["y_start"].to_numpy(dtype=float)
+        pitch.scatter(
+            starts_x, starts_y,
+            s=ALL_PASS_MARKER_SIZE,
+            marker="o",
+            color=COLOR_ALL_PASSES_END,
+            edgecolors="white",
+            linewidths=0.15,
+            ax=ax,
+            zorder=5,
+            alpha=0.55,
+        )
+
+    legend_handles = [
+        Line2D([0], [0], color=COLOR_ALL_PASSES, lw=1.2 * scale, label="Passe completo", alpha=0.45),
+        Line2D(
+            [0], [0], marker="o", color="w", markerfacecolor=COLOR_ALL_PASSES_END,
+            markersize=4, linestyle="None", label="Origem",
+        ),
+    ]
+    _add_map_legend(ax, legend_handles, fig_w=fig_w)
+    ax.set_title(
+        f"{player_name}\nPasses completos · {match_label}",
+        color="white", fontsize=8.4 * scale, pad=5,
+    )
+    _attack_arrow(fig, fig_w=fig_w)
+    return fig
+
+
 def draw_impact_pass_map(
     passes,
     player_name: str,

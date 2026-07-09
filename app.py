@@ -44,6 +44,7 @@ from comparison_config import (
     normalize_xt_surface_mode,
 )
 from passes_maps import (
+    draw_all_completed_passes_map,
     draw_impact_pass_map,
     draw_pass_destination_heatmap,
     draw_pass_origin_heatmap,
@@ -55,6 +56,7 @@ ABSOLUTE_METRIC_KEYS = pe.ABSOLUTE_METRIC_KEYS
 RELATIVE_METRIC_KEYS = pe.RELATIVE_METRIC_KEYS
 CONSTRUCTION_METRIC_KEYS = pe.CONSTRUCTION_METRIC_KEYS
 AGGRESSION_METRIC_KEYS = pe.AGGRESSION_METRIC_KEYS
+SCOUT_SECTION_SPECS = pe.SCOUT_SECTION_SPECS
 POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
@@ -313,6 +315,46 @@ st.markdown(
         align-items: center;
         justify-content: center;
     }
+    .grade-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        padding: 0.85rem 0.9rem;
+        min-height: 112px;
+        margin-bottom: 0.35rem;
+    }
+    .grade-card-title {
+        color: #93c5fd;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        line-height: 1.25;
+    }
+    .grade-card-sub {
+        color: #64748b;
+        font-size: 0.72rem;
+        line-height: 1.35;
+        margin-top: 0.3rem;
+    }
+    .grade-card-score { margin-top: 0.55rem; }
+    .grade-card-rank {
+        margin-top: 0.28rem;
+        font-size: 0.72rem;
+        color: #64748b;
+    }
+    .cmp-delta {
+        display: inline-block;
+        font-size: 0.58rem;
+        line-height: 1;
+        margin-left: 0.3rem;
+        vertical-align: middle;
+        font-weight: 800;
+    }
+    .cmp-delta.up { color: #34d399; }
+    .cmp-delta.down { color: #f87171; }
+    .cmp-delta.flat { color: #475569; }
+    .cmp-value-wrap { display: inline-flex; align-items: center; }
     .stat-section-row {
         display: flex;
         justify-content: space-between;
@@ -732,20 +774,96 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     return f'<div class="rating-row">{rating_box}{warnings}</div>'
 
 
-def _player_card_html(
+def _section_grade_card_html(
     player: dict,
-    sections: list[tuple[str, str | None, tuple[str, ...], bool]],
+    section_key: str,
+    title: str,
+    subtitle: str,
+) -> str:
+    section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
+    section_rank_info = player.get("section_rating_ranks") if isinstance(player.get("section_rating_ranks"), dict) else {}
+    score = section_ratings.get(section_key)
+    score_html = '<span class="section-rating-pill" style="background:#334155;color:#f8fafc">—</span>'
+    rank_html = ""
+    if score is not None:
+        txt = fmt_rating_score(score)
+        rank_info = section_rank_info.get(section_key)
+        if rank_info:
+            color = rank_color(int(rank_info["rank"]), int(rank_info["total"]))
+            txt_color = _badge_text_color(color)
+            score_html = (
+                f'<span class="section-rating-pill" style="background:{color};color:{txt_color}">'
+                f"{html.escape(txt)}</span>"
+            )
+            rank_html = (
+                f'<div class="grade-card-rank">'
+                f'{html.escape(rank_in_group_label(int(rank_info["rank"]), player.get("position_group")))}'
+                f"</div>"
+            )
+        else:
+            score_html = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
+    return (
+        '<div class="grade-card">'
+        f'<div class="grade-card-title">{html.escape(title)}</div>'
+        f'<div class="grade-card-sub">{html.escape(subtitle)}</div>'
+        f'<div class="grade-card-score">{score_html}</div>'
+        f"{rank_html}"
+        "</div>"
+    )
+
+
+def _section_metrics_card_html(
+    player: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...],
 ) -> str:
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    lines = "".join(
+        _metric_line_html(
+            analyst_metric_label(key),
+            key,
+            _stat_display(player, key),
+            metric_ranks,
+            player=player,
+            show_rank=True,
+        )
+        for key in keys
+    )
     return (
         '<div class="player-card">'
-        + _build_sections_html(player, metric_ranks, sections)
-        + "</div>"
+        f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>'
+        f"{lines}"
+        "</div>"
+    )
+
+
+def _metric_section_state_key(player_id: str) -> str:
+    return f"open_metric_section_{player_id}"
+
+
+def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tuple[str, str]:
+    if target_val is None or similar_val is None:
+        return "", ""
+    t = float(target_val)
+    s = float(similar_val)
+    if abs(t - s) < 0.05:
+        dot = '<span class="cmp-delta flat" title="Empate">●</span>'
+        return dot, dot
+    if t > s:
+        return (
+            '<span class="cmp-delta up" title="Acima do similar">▲</span>',
+            '<span class="cmp-delta down" title="Abaixo da referência">▼</span>',
+        )
+    return (
+        '<span class="cmp-delta down" title="Abaixo do similar">▼</span>',
+        '<span class="cmp-delta up" title="Acima da referência">▲</span>',
     )
 
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
+    player_id = str(player.get("player_id", ""))
     col_map1, col_map2, col_map3 = st.columns(3, gap="small")
 
     if passes is None or passes.empty:
@@ -753,12 +871,12 @@ def render_player_layout(player: dict, passes) -> None:
             st.warning("Sem passes para este jogador.")
     else:
         with col_map1:
-            st.caption("Origem — todos os passes")
-            fig_all = draw_pass_origin_heatmap(
+            st.caption("Passes completos — todos no campo")
+            fig_all = draw_all_completed_passes_map(
                 passes,
                 player["player_name"],
                 team_label,
-                completed_only=False,
+                compact=False,
             )
             st.pyplot(fig_all, clear_figure=True, use_container_width=True)
         with col_map2:
@@ -772,7 +890,7 @@ def render_player_layout(player: dict, passes) -> None:
 
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         (
-            "Geral",
+            "Participação",
             None,
             (
                 "minutes",
@@ -784,17 +902,6 @@ def render_player_layout(player: dict, passes) -> None:
             False,
         ),
     ]
-    abs_rel_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Métricas Absolutas", "metrics_absolute", ABSOLUTE_METRIC_KEYS, True),
-        ("Métricas Relativas", "metrics_relative", RELATIVE_METRIC_KEYS, True),
-    ]
-    long_ball_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Long balls", "long_balls", LONG_BALL_STAT_KEYS, True),
-    ]
-    style_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        ("Construção", "construction", CONSTRUCTION_METRIC_KEYS, True),
-        ("Agressão", "aggression", AGGRESSION_METRIC_KEYS, True),
-    ]
 
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
     general_card = (
@@ -805,16 +912,37 @@ def render_player_layout(player: dict, passes) -> None:
         + _build_sections_html(player, metric_ranks, general_sections)
         + "</div>"
     )
+    st.markdown(general_card, unsafe_allow_html=True)
 
-    col_general, col_metrics, col_long, col_style = st.columns(4, gap="small")
-    with col_general:
-        st.markdown(general_card, unsafe_allow_html=True)
-    with col_metrics:
-        st.markdown(_player_card_html(player, abs_rel_sections), unsafe_allow_html=True)
-    with col_long:
-        st.markdown(_player_card_html(player, long_ball_sections), unsafe_allow_html=True)
-    with col_style:
-        st.markdown(_player_card_html(player, style_sections), unsafe_allow_html=True)
+    st.markdown("##### Pilares de avaliação")
+    grade_cols = st.columns(len(SCOUT_SECTION_SPECS), gap="small")
+    open_section = st.session_state.get(_metric_section_state_key(player_id))
+    for col, (section_key, title, subtitle, _keys) in zip(grade_cols, SCOUT_SECTION_SPECS):
+        with col:
+            st.markdown(
+                _section_grade_card_html(player, section_key, title, subtitle),
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "Ver métricas" if open_section != section_key else "Selecionado",
+                key=f"grade_btn_{player_id}_{section_key}",
+                use_container_width=True,
+            ):
+                st.session_state[_metric_section_state_key(player_id)] = section_key
+
+    if open_section:
+        spec_by_key = {item[0]: item for item in SCOUT_SECTION_SPECS}
+        if open_section in spec_by_key:
+            _section_key, title, _subtitle, keys = spec_by_key[open_section]
+            c_close, _ = st.columns([1, 5])
+            with c_close:
+                if st.button("Fechar", key=f"grade_close_{player_id}"):
+                    st.session_state.pop(_metric_section_state_key(player_id), None)
+                    st.rerun()
+            st.markdown(
+                _section_metrics_card_html(player, _section_key, title, keys),
+                unsafe_allow_html=True,
+            )
 
 
 def render_map_section(
@@ -941,16 +1069,19 @@ def _comparison_metrics_html(
             label = _metric_label_html(key)
             t_rank = _metric_rank_subtitle_html(target, key, target_ranks)
             s_rank = _metric_rank_subtitle_html(similar, key, similar_ranks)
+            t_delta, s_delta = _cmp_delta_html(target_pct.get(key), similar_pct.get(key))
+            t_val = html.escape(sim.fmt_percentile_value(target_pct.get(key)))
+            s_val = html.escape(sim.fmt_percentile_value(similar_pct.get(key)))
             rows.extend([
                 '<div class="cmp-row">',
                 f'<span class="cmp-cell-label">{label}</span>',
                 (
-                    f'<span><span class="cmp-cell-value">'
-                    f'{html.escape(sim.fmt_percentile_value(target_pct.get(key)))}</span>{t_rank}</span>'
+                    f'<span><span class="cmp-value-wrap">'
+                    f'<span class="cmp-cell-value">{t_val}</span>{t_delta}</span>{t_rank}</span>'
                 ),
                 (
-                    f'<span><span class="cmp-cell-value">'
-                    f'{html.escape(sim.fmt_percentile_value(similar_pct.get(key)))}</span>{s_rank}</span>'
+                    f'<span><span class="cmp-value-wrap">'
+                    f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span>{s_rank}</span>'
                 ),
                 "</div>",
             ])
@@ -967,47 +1098,33 @@ def _render_comparison_maps_row(
     target_league: str,
     similar_league: str,
 ) -> None:
-    m1, m2, m3 = st.columns(3, gap="small")
+    m1, m2 = st.columns(2, gap="small")
     name_t = str(target.get("player_name", "—"))
     name_s = str(similar.get("player_name", "—"))
+    grid_label = f"{sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS}"
     with m1:
-        st.caption(f"Todos os passes · {target_league}")
+        st.caption(f"Origem · {name_t} · {grid_label}")
         if target_passes is not None and not target_passes.empty:
             fig = draw_pass_origin_heatmap(
                 target_passes,
                 name_t,
                 str(target.get("team", "—")),
-                cols=sim.ORIGIN_GRID_COLS,
-                rows=sim.ORIGIN_GRID_ROWS,
-                completed_only=False,
+                cols=sim.ORIGIN_ANALYSIS_COLS,
+                rows=sim.ORIGIN_ANALYSIS_ROWS,
                 compare=True,
             )
             st.pyplot(fig, clear_figure=True, use_container_width=True)
         else:
             st.caption("Sem passes.")
     with m2:
-        st.caption(f"Origem (completos) · {name_t}")
-        if target_passes is not None and not target_passes.empty:
-            fig = draw_pass_origin_heatmap(
-                target_passes,
-                name_t,
-                str(target.get("team", "—")),
-                cols=sim.ORIGIN_GRID_COLS,
-                rows=sim.ORIGIN_GRID_ROWS,
-                compare=True,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        else:
-            st.caption("Sem passes.")
-    with m3:
-        st.caption(f"Origem (completos) · {name_s}")
+        st.caption(f"Origem · {name_s} · {grid_label}")
         if similar_passes is not None and not similar_passes.empty:
             fig = draw_pass_origin_heatmap(
                 similar_passes,
                 name_s,
                 str(similar.get("team", "—")),
-                cols=sim.ORIGIN_GRID_COLS,
-                rows=sim.ORIGIN_GRID_ROWS,
+                cols=sim.ORIGIN_ANALYSIS_COLS,
+                rows=sim.ORIGIN_ANALYSIS_ROWS,
                 compare=True,
             )
             st.pyplot(fig, clear_figure=True, use_container_width=True)
@@ -1050,19 +1167,19 @@ def render_presentation_tab(
         c1, c2, c3 = st.columns(3, gap="small")
         with c1:
             st.markdown(
-                '<div class="pres-card"><h4>1 · Todos os passes</h4>'
-                "<p>Onde o jogador <em>tenta</em> passar — completos e incompletos. "
-                "Mostra zonas de atuação e volume espacial.</p></div>",
+                '<div class="pres-card"><h4>1 · Passes completos</h4>'
+                "<p>Cada passe <em>completado</em> no campo — origem e trajeto. "
+                "Mostra onde o jogador circula com a bola nos pés.</p></div>",
                 unsafe_allow_html=True,
             )
-            fig = draw_pass_origin_heatmap(
-                ex_passes, ex_name, str(example.get("team", "—")), completed_only=False,
+            fig = draw_all_completed_passes_map(
+                ex_passes, ex_name, str(example.get("team", "—")), compact=False,
             )
             st.pyplot(fig, clear_figure=True, use_container_width=True)
         with c2:
             st.markdown(
                 '<div class="pres-card"><h4>2 · Passes de impacto</h4>'
-                "<p>Setas dos passes que mudam o xT de forma relevante. "
+                "<p>Subset que muda o xT de forma relevante. "
                 "Cores destacam progressão e alto impacto.</p></div>",
                 unsafe_allow_html=True,
             )
@@ -1080,45 +1197,48 @@ def render_presentation_tab(
             )
             st.pyplot(fig, clear_figure=True, use_container_width=True)
 
+    st.markdown("#### Pilares de avaliação")
+    pillar_lines = "".join(
+        f"<li><strong>{html.escape(title)}</strong> — {html.escape(subtitle)}</li>"
+        for _key, title, subtitle, _keys in SCOUT_SECTION_SPECS
+    )
+    st.markdown(
+        '<div class="pres-card"><h4>Cards com nota por pilar</h4>'
+        f"<p>Cada pilar tem nota 0–10 e rank no grupo. Clique em <em>Ver métricas</em> "
+        f"para abrir o detalhe:</p><ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
+        f"font-size:0.88rem;line-height:1.5'>{pillar_lines}</ul></div>",
+        unsafe_allow_html=True,
+    )
+
     st.markdown("#### Métricas e rating")
     col_m1, col_m2 = st.columns(2, gap="medium")
     with col_m1:
         st.markdown(
-            '<div class="pres-card"><h4>Blocos de métricas</h4>'
-            "<p><strong>Absolutas</strong> — volume por 90 min.<br>"
-            "<strong>Relativas</strong> — eficiência por passe.<br>"
-            "<strong>Long balls</strong> — jogo vertical.<br>"
-            "<strong>Construção</strong> — saída e meio.<br>"
-            "<strong>Agressão</strong> — último terço e penetração.</p></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="pres-card"><h4>Ranking na posição</h4>'
-            "<p>Abaixo de cada valor aparece, por exemplo, "
-            "<em>23º em Laterais</em> — posição do jogador entre aptos do grupo. "
-            "Passe o mouse no nome da métrica para ver a definição.</p></div>",
+            '<div class="pres-card"><h4>Leitura das métricas</h4>'
+            "<p>Nomes em linguagem de scout; passe o mouse para ver a definição. "
+            "Abaixo de cada valor: <em>23º em Laterais</em> no grupo de posição.</p></div>",
             unsafe_allow_html=True,
         )
     with col_m2:
         st.markdown(
             '<div class="pres-card"><h4>Rating geral (0–10)</h4>'
-            "<p>Média ponderada dos ranks nas métricas principais. "
+            "<p>Média dos ranks nas métricas principais. "
             "Verde = topo do grupo; amarelo = meio; vermelho = abaixo.</p></div>",
             unsafe_allow_html=True,
         )
         st.markdown(
             '<div class="pres-card"><h4>Similaridade B ↔ A</h4>'
-            "<p>Compare jogadores entre Série B e Série A na mesma posição detalhada. "
-            "Três modos: percentil (Opção A), z-score (Opção C) e origem dos passes. "
-            "Na comparação, três mapas mostram volume total e origem dos completos.</p></div>",
+            "<p>Compare jogadores entre ligas na mesma posição detalhada. "
+            "Na comparação: dois mapas 12×8 de origem e tabela com ▲/▼ "
+            "verde/vermelho entre os percentis.</p></div>",
             unsafe_allow_html=True,
         )
 
     st.markdown("#### Como usar")
     steps = [
-        ("Dashboard", "Escolha posição e jogador; leia mapas + cards de métricas."),
-        ("Similaridade", "Selecione um atleta e veja os 10 mais parecidos na outra liga."),
-        ("Comparação", "Clique em uma linha para ver mapas lado a lado e percentis por métrica."),
+        ("Apresentação", "Entenda mapas, pilares e o fluxo de leitura."),
+        ("Dashboard", "Escolha o jogador; abra os pilares que quiser detalhar."),
+        ("Similaridade", "Selecione um atleta e compare com similares da outra liga."),
     ]
     for idx, (title, text) in enumerate(steps, start=1):
         st.markdown(
@@ -1286,7 +1406,7 @@ def _render_similarity_results_tab(
 
     st.markdown("#### Comparação")
     st.caption(
-        f"Percentis na posição detalhada · ranks no grupo de posição "
+        f"Percentis na posição detalhada · ranks no grupo · ▲ verde = acima · ▼ vermelho = abaixo "
         f"({html.escape(target_pos)} · {html.escape(target_league)} vs "
         f"{html.escape(similar_pos)} · {html.escape(similar_league)})."
     )

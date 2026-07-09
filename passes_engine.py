@@ -229,6 +229,39 @@ SECTION_RATING_GROUPS: dict[str, tuple[str, ...]] = {
     "aggression": AGGRESSION_METRIC_KEYS,
 }
 
+SCOUT_SECTION_SPECS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    (
+        "metrics_absolute",
+        "Produção por 90 min",
+        "Quanto o jogador entrega em volume — impacto, alto impacto e ganho de xT.",
+        ABSOLUTE_METRIC_KEYS,
+    ),
+    (
+        "metrics_relative",
+        "Eficiência por passe",
+        "Qualidade média de cada tentativa — taxas e frequência de passes decisivos.",
+        RELATIVE_METRIC_KEYS,
+    ),
+    (
+        "long_balls",
+        "Jogo vertical",
+        "Bolas longas: volume, impacto e conversão em passes perigosos.",
+        ("long_balls", *LONG_BALL_STAT_KEYS),
+    ),
+    (
+        "construction",
+        "Construção de jogo",
+        "Passes de saída e meio-campo que progridem a posse com segurança.",
+        CONSTRUCTION_METRIC_KEYS,
+    ),
+    (
+        "aggression",
+        "Penetração ofensiva",
+        "Passes no último terço e ações que quebram linhas adversárias.",
+        AGGRESSION_METRIC_KEYS,
+    ),
+)
+
 RANK_DISPLAY_KEYS: tuple[str, ...] = (
     *TOOLTIP_EXTRA_KEYS,
     "minutes_pct",
