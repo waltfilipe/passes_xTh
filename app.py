@@ -325,7 +325,10 @@ st.markdown(
     .pres-grid-demo {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 0.12rem;
+        gap: 0;
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        overflow: hidden;
     }
     .pres-layout-demo {
         display: grid;
@@ -335,9 +338,8 @@ st.markdown(
     }
     .pres-blur-tile {
         position: relative;
-        border-radius: 10px;
         overflow: hidden;
-        border: 1px solid #2a3550;
+        border: none;
         aspect-ratio: 3 / 2;
         background: #101522;
     }
@@ -359,7 +361,17 @@ st.markdown(
         align-items: center;
         text-align: center;
         padding: 0.7rem 0.8rem;
+        pointer-events: none;
+    }
+    .pres-blur-caption {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 0.55rem 0.75rem;
+        border-radius: 10px;
         background: rgba(0, 0, 0, 0.84);
+        max-width: 92%;
     }
     .pres-blur-overlay strong {
         color: #f1f5f9;
@@ -393,7 +405,10 @@ st.markdown(
     .pres-blur-overlay-side {
         justify-content: center;
         padding: 1.1rem;
+    }
+    .pres-blur-overlay-side .pres-blur-caption {
         background: rgba(0, 0, 0, 0.9);
+        padding: 0.85rem 1rem;
     }
     .pres-blur-overlay-side strong { font-size: 1rem; max-width: 14rem; }
     .pres-blur-overlay-side p { font-size: 0.82rem; max-width: 15rem; }
@@ -803,11 +818,11 @@ def render_rating_board(
         return
 
     cards = []
-    max_rows = 0
+    card_heights: list[int] = []
     for group, rows in groups:
-        max_rows = max(max_rows, len(rows))
         accent = GROUP_COLORS.get(group, "#60a5fa")
         label = position_group_label(group)
+        card_heights.append(48 + 44 * len(rows))
         cards.append(
             f'<div class="ranking-card-wrap" style="border-top:3px solid {accent}">'
             f'<div class="ranking-card-head">{html.escape(label)}'
@@ -815,6 +830,16 @@ def render_rating_board(
             f"{_rating_table_rows_html(rows, selected_player_id=selected_player_id)}"
             "</div>"
         )
+
+    cols_per_row = 3
+    grid_gap = 14
+    total_height = 0
+    for row_start in range(0, len(card_heights), cols_per_row):
+        row_heights = card_heights[row_start : row_start + cols_per_row]
+        total_height += max(row_heights)
+        if row_start + cols_per_row < len(card_heights):
+            total_height += grid_gap
+    height = min(total_height + 20, 2200)
 
     page = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -860,8 +885,8 @@ function pickPlayer(pid) {{
 </script></head><body>
 <div class="ranking-grid">{"".join(cards)}</div>
 </body></html>"""
-    height = min(44 * max_rows + 88, 920)
-    components.html(page, height=height, scrolling=False)
+    height = min(total_height + 20, 2200)
+    components.html(page, height=height, scrolling=height >= 2200)
 
 
 def render_rating_table(
@@ -1487,9 +1512,10 @@ def _pres_blur_tile_html(b64: str, title: str, text: str) -> str:
         '<div class="pres-blur-tile">'
         f'<img src="data:image/png;base64,{b64}" alt="">'
         '<div class="pres-blur-overlay">'
+        '<div class="pres-blur-caption">'
         f"<strong>{html.escape(title)}</strong>"
         f"<p>{html.escape(text)}</p>"
-        "</div></div>"
+        "</div></div></div>"
     )
 
 
@@ -1552,10 +1578,11 @@ def _render_presentation_blur_demo(player: dict, passes) -> None:
         '<div class="pres-blur-panel">'
         f'<div class="pres-blur-back">{sidebar_back}</div>'
         '<div class="pres-blur-overlay pres-blur-overlay-side">'
+        '<div class="pres-blur-caption">'
         "<strong>Cards do jogador</strong>"
         "<p>À direita: rating geral, participação e pilares com nota. "
         "Clique na seta de cada pilar para abrir as métricas detalhadas.</p>"
-        "</div></div></div>"
+        "</div></div></div></div>"
     )
     st.html(demo_html, width="stretch")
 

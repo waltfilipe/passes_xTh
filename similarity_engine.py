@@ -447,7 +447,8 @@ def similarity_search_pool(
 ) -> list[dict]:
     if not position:
         return []
-    return list(players_by_position.get(str(position).strip().upper(), []))
+    key = str(position).strip()
+    return list(players_by_position.get(key, []))
 
 
 def group_players_by_position(players: list[dict]) -> dict[str, list[dict]]:

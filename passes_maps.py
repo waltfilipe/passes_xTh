@@ -91,36 +91,42 @@ def _add_map_legend(ax, handles: list, *, fig_w: float) -> None:
     leg.get_frame().set_alpha(0.90)
 
 
-def _attack_arrow(fig, *, fig_w: float, has_cbar: bool = False) -> None:
+def _attack_arrow(fig, *, fig_w: float, has_cbar: bool = False, dashboard: bool = False) -> None:
     scale = fig_w / MAP_REF_WIDTH
     ox = -0.04 if has_cbar else 0.0
+    y_arrow = 0.052 if dashboard else 0.045
+    y_label = 0.018 if dashboard else 0.012
     fig.patches.append(
         FancyArrowPatch(
-            (0.44 + ox, 0.045),
-            (0.56 + ox, 0.045),
+            (0.44 + ox, y_arrow),
+            (0.56 + ox, y_arrow),
             transform=fig.transFigure,
             arrowstyle="-|>",
-            mutation_scale=10 * scale,
-            linewidth=1.4 * scale,
+            mutation_scale=(8.5 if dashboard else 10.0) * scale,
+            linewidth=(1.2 if dashboard else 1.4) * scale,
             color="#aaaaaa",
         )
     )
     fig.text(
         0.50 + ox,
-        0.012,
-        "Attacking Direction",
+        y_label,
+        "Direção de Ataque",
         ha="center",
         va="bottom",
         transform=fig.transFigure,
-        fontsize=7.0 * scale,
+        fontsize=(6.2 if dashboard else 7.0) * scale,
         color="#aaaaaa",
     )
 
 
 def _fit_dashboard_pass_axes(fig, ax) -> None:
     """Normalize pitch footprint for the 2×2 dashboard grid."""
-    pos = ax.get_position()
-    ax.set_position([pos.x0, pos.y0 + 0.012, pos.width, pos.height * 0.97])
+    ax.set_position([0.07, 0.11, 0.86, 0.76])
+
+
+def _finalize_dashboard_map(fig, ax, *, fig_w: float) -> None:
+    _fit_dashboard_pass_axes(fig, ax)
+    _attack_arrow(fig, fig_w=fig_w, dashboard=True)
 
 
 def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: float) -> None:
@@ -211,10 +217,10 @@ def draw_all_completed_passes_map(
         DASHBOARD_TITLE_COMPLETED if dashboard else f"{player_name}\nPasses completos · {match_label}",
         color="white", fontsize=7.6 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
-    if not dashboard and not dashboard_large:
+    if dashboard:
+        _finalize_dashboard_map(fig, ax, fig_w=fig_w)
+    elif not dashboard_large:
         _attack_arrow(fig, fig_w=fig_w)
-    elif dashboard:
-        _fit_dashboard_pass_axes(fig, ax)
     return fig
 
 
@@ -269,10 +275,10 @@ def draw_impact_pass_map(
         DASHBOARD_TITLE_IMPACT if dashboard else f"{player_name}\nPasses Impact · {match_label}",
         color="white", fontsize=7.6 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
-    if not dashboard and not dashboard_large:
+    if dashboard:
+        _finalize_dashboard_map(fig, ax, fig_w=fig_w)
+    elif not dashboard_large:
         _attack_arrow(fig, fig_w=fig_w)
-    elif dashboard:
-        _fit_dashboard_pass_axes(fig, ax)
     return fig
 
 
@@ -339,11 +345,14 @@ def draw_pass_destination_heatmap(
             )
 
     pitch.draw(ax=ax)
-    if dashboard or dashboard_large:
-        if dashboard:
-            _fit_dashboard_pass_axes(fig, ax)
+    if dashboard:
         title = DASHBOARD_TITLE_DEST_IMPACT if impact_only else DASHBOARD_TITLE_DEST_COMPLETED
         ax.set_title(title, color="white", fontsize=7.6 * scale, pad=4)
+        _finalize_dashboard_map(fig, ax, fig_w=fig_w)
+    elif dashboard_large:
+        title = DASHBOARD_TITLE_DEST_IMPACT if impact_only else DASHBOARD_TITLE_DEST_COMPLETED
+        ax.set_title(title, color="white", fontsize=7.6 * scale, pad=4)
+        _attack_arrow(fig, fig_w=fig_w)
     else:
         dest_kind = "passes impact" if impact_only else "passes completos"
         ax.set_title(
