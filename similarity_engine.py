@@ -7,14 +7,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-POSITION_GROUPS_ORDER = (
-    "Zagueiros",
-    "Laterais",
-    "Meio-campistas",
-    "Extremos",
-    "Atacantes",
-)
-
 FIELD_X = 120.0
 FIELD_Y = 80.0
 ORIGIN_GRID_COLS = 8
@@ -82,6 +74,26 @@ SERIE_A_POSITION_TO_GROUP: dict[str, str] = {
     "CB": "Zagueiros",
     "CM": "Meio-campistas",
     "ST": "Atacantes",
+}
+
+_CB_FAMILY = frozenset({"CB", "LCB", "RCB"})
+_CM_FAMILY = frozenset({"CM", "CDM", "CAM", "LCM", "RCM", "LDM", "RDM", "DM"})
+_ST_FAMILY = frozenset({"ST", "CF", "SS", "RCF", "LCF"})
+
+AGGREGATED_SIMILARITY_POSITIONS = ("CB", "CM", "ST")
+
+SIMILARITY_POSITION_LABELS: dict[str, str] = {
+    "CB": "Zagueiro (CB)",
+    "CM": "Meio-campista (CM)",
+    "ST": "Atacante (ST)",
+    "LB": "Lateral esquerdo (LB)",
+    "RB": "Lateral direito (RB)",
+    "LWB": "Ala esquerdo (LWB)",
+    "RWB": "Ala direito (RWB)",
+    "LM": "Meia esquerdo (LM)",
+    "RM": "Meia direito (RM)",
+    "LW": "Extremo esquerdo (LW)",
+    "RW": "Extremo direito (RW)",
 }
 
 TOP_K_DEFAULT = 10
@@ -425,20 +437,37 @@ def find_similar_option_c(
     return results[:top_k]
 
 
+def similarity_position_key(short_pos: str | None) -> str | None:
+    """Pool key for cross-league similarity: LB/LM/… exact; CB/CM/ST families merged."""
+    if not short_pos:
+        return None
+    pos = str(short_pos).strip().upper()
+    if not pos or pos in EXCLUDED_SEARCH_POSITIONS:
+        return None
+    if pos in _CB_FAMILY:
+        return "CB"
+    if pos in _CM_FAMILY:
+        return "CM"
+    if pos in _ST_FAMILY:
+        return "ST"
+    return pos
+
+
+def similarity_position_label(key: str | None) -> str:
+    if not key:
+        return "—"
+    text = str(key).strip().upper()
+    return SIMILARITY_POSITION_LABELS.get(text, text)
+
+
 def player_search_position(player: dict) -> str | None:
-    """Aggregated position group for cross-league similarity pools."""
-    grp = player.get("position_group")
-    if not grp:
-        return None
-    text = str(grp).strip()
-    if not text or text == "—" or text not in POSITION_GROUPS_ORDER:
-        return None
-    return text
+    """Similarity pool key from the player's short position code."""
+    return similarity_position_key(player.get("position"))
 
 
 def group_players_by_detailed_position(players: list[dict]) -> dict[str, list[dict]]:
-    """Group players by aggregated position (Zagueiros, Extremos, …)."""
-    return group_players_by_position(players)
+    """Group players by similarity pool key (side-aware except CB/CM/ST)."""
+    return group_players_by_similarity_position(players)
 
 
 def similarity_search_pool(
@@ -447,17 +476,22 @@ def similarity_search_pool(
 ) -> list[dict]:
     if not position:
         return []
-    key = str(position).strip()
+    key = str(position).strip().upper()
     return list(players_by_position.get(key, []))
 
 
-def group_players_by_position(players: list[dict]) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {g: [] for g in POSITION_GROUPS_ORDER}
+def group_players_by_similarity_position(players: list[dict]) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
     for p in players:
-        grp = p.get("position_group")
-        if grp in out:
-            out[str(grp)].append(p)
+        key = player_search_position(p)
+        if not key:
+            continue
+        out.setdefault(key, []).append(p)
     return out
+
+
+def group_players_by_position(players: list[dict]) -> dict[str, list[dict]]:
+    return group_players_by_similarity_position(players)
 
 
 def pool_from_groups(players_by_group: dict[str, list[dict]], groups: tuple[str, ...]) -> list[dict]:

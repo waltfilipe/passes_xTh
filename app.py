@@ -1627,8 +1627,8 @@ def render_presentation_tab(
     st.markdown(
         '<div class="pres-card pres-card-sim"><h4>Como funciona a similaridade</h4>'
         "<p>Selecione um jogador de uma liga e o sistema busca os <strong>10 mais parecidos</strong> "
-        "na outra liga, no <strong>mesmo grupo de posição</strong> "
-        "(Zagueiro, Lateral, Meio-campista, Extremo ou Atacante).</p>"
+        "na outra liga, na <strong>mesma posição</strong> "
+        "(lado respeitado: LB↔LB, LM↔LM; apenas CB, CM e ST aglutinam variantes).</p>"
         "<p style='margin-top:0.55rem'>O ranking usa <strong>distância euclidiana ponderada em z-scores</strong> "
         "das métricas de passe no pool da posição. Quanto menor a distância, maior a similaridade.</p>"
         "<p style='margin-top:0.55rem'>Ao clicar em um similar, você vê mapas de origem lado a lado e uma tabela "
@@ -1811,7 +1811,7 @@ def _render_similarity_results_tab(
 
     st.markdown("#### Comparação")
     st.caption(
-        f"Percentis no grupo {html.escape(position_group_label(target_pos))} · ranks no grupo · "
+        f"Percentis no pool {html.escape(sim.similarity_position_label(target_pos))} · ranks no grupo · "
         f"▲ verde = acima · ▼ vermelho = abaixo "
         f"({html.escape(target_league)} vs {html.escape(similar_league)})."
     )
@@ -1878,7 +1878,7 @@ def render_similarity_section(
     st.caption(
         f"Selecione um jogador da {'Série B' if sb_to_sa else 'Série A'}; "
         f"a tabela mostra os top {SIMILARITY_TOP_K} da {'Série A' if sb_to_sa else 'Série B'} "
-        "no mesmo grupo de posição. Clique em uma linha para comparar."
+        "na mesma posição (lado respeitado; CB, CM e ST aglutinados). Clique em uma linha para comparar."
     )
 
     if not all_players:
@@ -1936,28 +1936,28 @@ def render_similarity_section(
         target_passes = passes_by_player_sb.get(target_id)
         pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
         pool_passes = serie_a_passes
-        pool_label = f"Série A · {position_group_label(search_pos) or '—'}"
+        pool_label = f"Série A · {sim.similarity_position_label(search_pos)}"
         target_league = "Série B"
     else:
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
         pool = sim.similarity_search_pool(sb_by_pos, search_pos)
         pool_passes = passes_by_player_sb
-        pool_label = f"Série B · {position_group_label(search_pos) or '—'}"
+        pool_label = f"Série B · {sim.similarity_position_label(search_pos)}"
         target_league = "Série A"
 
     if not search_pos:
-        st.warning("Grupo de posição inválido para comparação (goleiros são excluídos).")
+        st.warning("Posição inválida para comparação (goleiros são excluídos).")
         return
 
     if not pool:
         st.warning(
-            f"Nenhum jogador elegível no grupo **{html.escape(position_group_label(search_pos))}** "
+            f"Nenhum jogador elegível na posição **{html.escape(sim.similarity_position_label(search_pos))}** "
             f"em {pool_label.split(' · ')[0]}."
         )
         return
 
-    group_label = position_group_label(search_pos)
+    group_label = sim.similarity_position_label(search_pos)
     st.markdown(
         f"**{html.escape(str(target.get('player_name', '—')))}** · "
         f"{html.escape(str(target.get('team', '—')))} · "
