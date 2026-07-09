@@ -325,10 +325,7 @@ st.markdown(
     .pres-grid-demo {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 0;
-        border: 1px solid #2a3550;
-        border-radius: 10px;
-        overflow: hidden;
+        gap: 0.55rem;
     }
     .pres-layout-demo {
         display: grid;
@@ -339,9 +336,11 @@ st.markdown(
     .pres-blur-tile {
         position: relative;
         overflow: hidden;
-        border: none;
+        border: 1px solid #2a3550;
+        border-radius: 10px;
         aspect-ratio: 3 / 2;
         background: #101522;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
     }
     .pres-blur-tile img {
         width: 100%;
@@ -1379,31 +1378,6 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
     render_rating_board(groups, selected_player_id=selected_player_id)
 
 
-def _group_players_by_position_group(players: list[dict]) -> dict[str, list[dict]]:
-    by_group: dict[str, list[dict]] = {}
-    for player in players:
-        group = str(player.get("position_group") or "—")
-        by_group.setdefault(group, []).append(player)
-    return by_group
-
-
-def _eligible_pool_for_player(player: dict, pool_by_group: dict[str, list[dict]]) -> list[dict]:
-    group = str(player.get("position_group") or "—")
-    pool = pool_by_group.get(group, [])
-    eligible = [p for p in pool if p.get("eligible_for_rating")]
-    return eligible if eligible else list(pool)
-
-
-def _player_metric_ranks(player: dict, pool_by_group: dict[str, list[dict]]) -> dict:
-    pool = _eligible_pool_for_player(player, pool_by_group)
-    if not pool:
-        return {}
-    if player.get("metric_ranks") and player.get("player_id") in {p["player_id"] for p in pool}:
-        return dict(player.get("metric_ranks") or {})
-    rated = rate_player_vs_eligible_pool(player, pool)
-    return dict(rated.get("metric_ranks") or {})
-
-
 def _comparison_metrics_html(
     target: dict,
     similar: dict,
@@ -1412,8 +1386,6 @@ def _comparison_metrics_html(
     similar_league: str,
     target_pct: dict[str, float],
     similar_pct: dict[str, float],
-    target_ranks: dict,
-    similar_ranks: dict,
 ) -> str:
     rows = [
         '<div class="player-card">',
@@ -1427,8 +1399,6 @@ def _comparison_metrics_html(
         rows.append(f'<div class="cmp-section-title">{html.escape(section_name)}</div>')
         for key in section_keys:
             label = _metric_label_html(key)
-            t_rank = _metric_rank_subtitle_html(target, key, target_ranks)
-            s_rank = _metric_rank_subtitle_html(similar, key, similar_ranks)
             t_delta, s_delta = _cmp_delta_html(target_pct.get(key), similar_pct.get(key))
             t_val = html.escape(sim.fmt_percentile_value(target_pct.get(key)))
             s_val = html.escape(sim.fmt_percentile_value(similar_pct.get(key)))
@@ -1437,11 +1407,11 @@ def _comparison_metrics_html(
                 f'<span class="cmp-cell-label">{label}</span>',
                 (
                     f'<span><span class="cmp-value-wrap">'
-                    f'<span class="cmp-cell-value">{t_val}</span>{t_delta}</span>{t_rank}</span>'
+                    f'<span class="cmp-cell-value">{t_val}</span>{t_delta}</span></span>'
                 ),
                 (
                     f'<span><span class="cmp-value-wrap">'
-                    f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span>{s_rank}</span>'
+                    f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span></span>'
                 ),
                 "</div>",
             ])
@@ -1709,16 +1679,13 @@ def _similarity_results_df(
 ):
     import pandas as pd
 
-    origin_col_label = (
-        f"Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})"
-    )
     rows = []
     for rank, row in enumerate(results, start=1):
         entry = {
             "#": rank,
             "Jogador": row.get("player_name", "—"),
             "Time": row.get("team", "—"),
-            "Posição": row.get("position", "—"),
+            "Sim.": f"{row.get('similarity_pct', 0):.0f}%",
             "_player_id": str(row.get("player_id", "")),
         }
         if origin_dual:
@@ -1728,16 +1695,13 @@ def _similarity_results_df(
         elif include_origin:
             entry["Similaridade"] = f"{row.get('similarity_pct', 0):.1f}%"
             entry["Origem dominante"] = row.get("origin_dominant", "—")
+        elif origin_column:
+            origin_val = row.get("origin_similarity_pct")
+            entry["Origem"] = (
+                f"{float(origin_val):.0f}%" if origin_val is not None else "—"
+            )
         else:
             entry["Similaridade"] = f"{row.get('similarity_pct', 0):.1f}%"
-            if origin_column:
-                origin_val = row.get("origin_similarity_pct")
-                entry[origin_col_label] = (
-                    f"{float(origin_val):.1f}%" if origin_val is not None else "—"
-                )
-            entry["Impact p90"] = fmt_stat_value("impact_passes_p90", row.get("impact_passes_p90"))
-            entry["PHI p90"] = fmt_stat_value("phi_p90", row.get("phi_p90"))
-            entry["ΔxT p90"] = fmt_stat_value("dxt_p90", row.get("dxt_p90"))
         rows.append(entry)
     return pd.DataFrame(rows)
 
@@ -1752,8 +1716,6 @@ def _render_similarity_results_tab(
     similar_league: str,
     target_pool_by_pos: dict[str, list[dict]],
     similar_pool_by_pos: dict[str, list[dict]],
-    target_pool_by_group: dict[str, list[dict]],
-    similar_pool_by_group: dict[str, list[dict]],
     pick_key: str,
     include_origin: bool = False,
     origin_dual: bool = False,
@@ -1804,14 +1766,11 @@ def _render_similarity_results_tab(
     compare_keys = sim.SIMILARITY_METRICS_A
     target_pct = sim.position_pool_percentiles(target, target_pool_by_pos, keys=compare_keys)
     similar_pct = sim.position_pool_percentiles(similar, similar_pool_by_pos, keys=compare_keys)
-    target_ranks = _player_metric_ranks(target, target_pool_by_group)
-    similar_ranks = _player_metric_ranks(similar, similar_pool_by_group)
     target_pos = sim.player_search_position(target) or "—"
-    similar_pos = sim.player_search_position(similar) or "—"
 
     st.markdown("#### Comparação")
     st.caption(
-        f"Percentis no pool {html.escape(sim.similarity_position_label(target_pos))} · ranks no grupo · "
+        f"Percentis no pool {html.escape(sim.similarity_position_label(target_pos))} · "
         f"▲ verde = acima · ▼ vermelho = abaixo "
         f"({html.escape(target_league)} vs {html.escape(similar_league)})."
     )
@@ -1857,8 +1816,6 @@ def _render_similarity_results_tab(
             similar_league=similar_league,
             target_pct=target_pct,
             similar_pct=similar_pct,
-            target_ranks=target_ranks,
-            similar_ranks=similar_ranks,
         ),
         unsafe_allow_html=True,
     )
@@ -1897,8 +1854,6 @@ def render_similarity_section(
     prefix = "ba" if sb_to_sa else "ab"
     serie_a_by_pos = sim.group_players_by_detailed_position(serie_a_enriched)
     sb_by_pos = sim.group_players_by_detailed_position(sb_enriched)
-    serie_a_by_group = _group_players_by_position_group(serie_a_enriched)
-    sb_by_group = _group_players_by_position_group(sb_enriched)
     players_sb_by_id = {str(p["player_id"]): p for p in sb_enriched}
     players_sa_by_id = {str(p["player_id"]): p for p in serie_a_enriched}
 
@@ -1975,9 +1930,8 @@ def render_similarity_section(
     similar_league_label = "Série A" if sb_to_sa else "Série B"
 
     st.caption(
-        f"Ranking por distância euclidiana ponderada em z-scores do pool {similar_league_label}. "
-        f"A coluna **Sim. origem ({sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS})** "
-        "é informativa (cosseno entre mapas de origem) e não altera o ranking."
+        f"Ranking por z-scores no pool {similar_league_label}. "
+        f"A coluna Origem é informativa (mapa de origem) e não altera o ranking."
     )
     results = sim.find_similar_option_c(target, pool, top_k=top_k)
     results = sim.attach_pass_origin_similarity(
@@ -1994,8 +1948,6 @@ def render_similarity_section(
         similar_league=similar_league_label,
         target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
         similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
-        target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
-        similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
         pick_key=f"sim_{prefix}_pick",
         include_origin=False,
         origin_column=True,
