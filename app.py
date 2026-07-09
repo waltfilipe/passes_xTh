@@ -331,15 +331,8 @@ st.markdown(
         text-transform: uppercase;
         line-height: 1.25;
     }
-    .grade-card-sub {
-        color: #64748b;
-        font-size: 0.72rem;
-        line-height: 1.35;
-        margin-top: 0.3rem;
-    }
-    .grade-card-score { margin-top: 0.55rem; }
     .grade-card-rank {
-        margin-top: 0.28rem;
+        margin-top: 0.18rem;
         font-size: 0.72rem;
         color: #64748b;
     }
@@ -371,7 +364,7 @@ st.markdown(
     .grade-summary-main { flex: 1; min-width: 0; }
     .grade-summary-top {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         justify-content: space-between;
         gap: 0.65rem;
     }
@@ -816,8 +809,7 @@ def _section_grade_summary_bits(
     player: dict,
     section_key: str,
     title: str,
-    subtitle: str,
-) -> tuple[str, str]:
+) -> str:
     section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
     section_rank_info = player.get("section_rating_ranks") if isinstance(player.get("section_rating_ranks"), dict) else {}
     score = section_ratings.get(section_key)
@@ -840,27 +832,23 @@ def _section_grade_summary_bits(
             )
         else:
             score_html = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
-    main = (
+    return (
         f'<div class="grade-summary-main">'
         f'<div class="grade-summary-top">'
-        f'<div><div class="grade-card-title">{html.escape(title)}</div>'
-        f'<div class="grade-card-sub">{html.escape(subtitle)}</div></div>'
+        f'<div><div class="grade-card-title">{html.escape(title)}</div>{rank_html}</div>'
         f'<div class="grade-card-score">{score_html}</div>'
         f"</div>"
-        f"{rank_html}"
         f"</div>"
     )
-    return main, score_html
 
 
 def _section_grade_accordion_html(
     player: dict,
     section_key: str,
     title: str,
-    subtitle: str,
     keys: tuple[str, ...],
 ) -> str:
-    summary_main, _ = _section_grade_summary_bits(player, section_key, title, subtitle)
+    summary_main = _section_grade_summary_bits(player, section_key, title)
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
     lines = "".join(
         _metric_line_html(
@@ -931,8 +919,8 @@ def render_player_layout(player: dict, passes) -> None:
         + "</div>"
     )
     pillar_html = "".join(
-        _section_grade_accordion_html(player, section_key, title, subtitle, keys)
-        for section_key, title, subtitle, keys in SCOUT_SECTION_SPECS
+        _section_grade_accordion_html(player, section_key, title, keys)
+        for section_key, title, _subtitle, keys in SCOUT_SECTION_SPECS
     )
     sidebar_html = (
         '<div class="sidebar-stack">'
@@ -945,22 +933,23 @@ def render_player_layout(player: dict, passes) -> None:
         if passes is None or passes.empty:
             st.warning("Sem passes para este jogador.")
         else:
-            st.caption("Passes completos — todos no campo")
             fig_all = draw_all_completed_passes_map(
                 passes,
                 player["player_name"],
                 team_label,
-                compact=False,
+                dashboard=True,
             )
-            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+            st.pyplot(fig_all, clear_figure=True, use_container_width=False)
 
-            st.caption("Passes de impacto")
-            fig = draw_impact_pass_map(passes, player["player_name"], team_label, compact=False)
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
+            fig = draw_impact_pass_map(
+                passes, player["player_name"], team_label, dashboard=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=False)
 
-            st.caption("Destino — heatmap")
-            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
-            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+            fig_heat = draw_pass_destination_heatmap(
+                passes, player["player_name"], team_label, dashboard=True,
+            )
+            st.pyplot(fig_heat, clear_figure=True, use_container_width=False)
 
     with col_side:
         st.markdown(sidebar_html, unsafe_allow_html=True)
@@ -1122,9 +1111,7 @@ def _render_comparison_maps_row(
     m1, m2 = st.columns(2, gap="small")
     name_t = str(target.get("player_name", "—"))
     name_s = str(similar.get("player_name", "—"))
-    grid_label = f"{sim.ORIGIN_ANALYSIS_COLS}×{sim.ORIGIN_ANALYSIS_ROWS}"
     with m1:
-        st.caption(f"Origem · {name_t} · {grid_label}")
         if target_passes is not None and not target_passes.empty:
             fig = draw_pass_origin_heatmap(
                 target_passes,
@@ -1138,7 +1125,6 @@ def _render_comparison_maps_row(
         else:
             st.caption("Sem passes.")
     with m2:
-        st.caption(f"Origem · {name_s} · {grid_label}")
         if similar_passes is not None and not similar_passes.empty:
             fig = draw_pass_origin_heatmap(
                 similar_passes,

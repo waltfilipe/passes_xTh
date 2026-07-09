@@ -16,6 +16,8 @@ FIG_W, FIG_H = 7.2, 4.8
 FIG_DPI = 220
 FIG_W_COMPACT, FIG_H_COMPACT = 6.8, 4.5
 FIG_DPI_COMPACT = 280
+FIG_W_DASHBOARD, FIG_H_DASHBOARD = 4.85, 3.25
+FIG_DPI_DASHBOARD = 175
 MAP_REF_WIDTH = 7.2
 FIELD_X, FIELD_Y = 120.0, 80.0
 PASS_DEST_HEATMAP_COLS = 12
@@ -40,6 +42,14 @@ XT_MAP_FIG_W, XT_MAP_FIG_H = 7.8, 5.2
 XT_MAP_FIG_DPI = 160
 XT_MAP_REF_WIDTH = 7.8
 XT_MAP_COLOR_PERCENTILE = (5.0, 95.0)
+
+
+def _resolve_figsize(*, compact: bool = True, dashboard: bool = False) -> tuple[tuple[float, float], int]:
+    if dashboard:
+        return (FIG_W_DASHBOARD, FIG_H_DASHBOARD), FIG_DPI_DASHBOARD
+    if compact:
+        return (FIG_W_COMPACT, FIG_H_COMPACT), FIG_DPI_COMPACT
+    return (FIG_W, FIG_H), FIG_DPI
 
 
 def _map_scale(fig_w: float) -> float:
@@ -124,14 +134,10 @@ def draw_all_completed_passes_map(
     match_label: str = "todos os jogos",
     *,
     compact: bool = True,
+    dashboard: bool = False,
 ):
     """Every completed pass drawn on the pitch (origin marker + faint arrow)."""
-    if compact:
-        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
-        dpi = FIG_DPI_COMPACT
-    else:
-        figsize = (FIG_W, FIG_H)
-        dpi = FIG_DPI
+    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
@@ -194,14 +200,10 @@ def draw_impact_pass_map(
     match_label: str = "todos os jogos",
     *,
     compact: bool = True,
+    dashboard: bool = False,
 ):
     """Impact passes only — same visual language as the legacy pass map."""
-    if compact:
-        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
-        dpi = FIG_DPI_COMPACT
-    else:
-        figsize = (FIG_W, FIG_H)
-        dpi = FIG_DPI
+    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
@@ -250,14 +252,10 @@ def draw_pass_destination_heatmap(
     match_label: str = "todos os jogos",
     *,
     compact: bool = True,
+    dashboard: bool = False,
 ):
     """12×8 heatmap of completed impact pass end locations."""
-    if compact:
-        figsize = (FIG_W_COMPACT, FIG_H_COMPACT)
-        dpi = FIG_DPI_COMPACT
-    else:
-        figsize = (FIG_W, FIG_H)
-        dpi = FIG_DPI
+    figsize, dpi = _resolve_figsize(compact=compact, dashboard=dashboard)
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
