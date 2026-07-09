@@ -247,11 +247,12 @@ def draw_pass_origin_heatmap(
     *,
     cols: int = 8,
     rows: int = 6,
+    completed_only: bool = True,
     mini: bool = False,
     tiny: bool = False,
     compare: bool = False,
 ):
-    """Heatmap of completed pass start locations (origin)."""
+    """Heatmap of pass start locations (origin)."""
     cols = max(int(cols), 1)
     rows = max(int(rows), 1)
     if compare:
@@ -269,21 +270,23 @@ def draw_pass_origin_heatmap(
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
-    completed = passes[passes["is_won"].astype(bool)].copy() if passes is not None else passes
+    work = passes
+    if passes is not None and completed_only and "is_won" in passes.columns:
+        work = passes[passes["is_won"].astype(bool)].copy()
     fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
 
     x_bins = np.linspace(0.0, FIELD_X, cols + 1)
     y_bins = np.linspace(0.0, FIELD_Y, rows + 1)
     grid = np.zeros((rows, cols), dtype=float)
 
-    if completed is not None and not completed.empty:
+    if work is not None and not work.empty:
         x_idx = np.clip(
-            np.digitize(completed["x_start"].to_numpy(), x_bins, right=True) - 1,
+            np.digitize(work["x_start"].to_numpy(), x_bins, right=True) - 1,
             0,
             cols - 1,
         )
         y_idx = np.clip(
-            np.digitize(completed["y_start"].to_numpy(), y_bins, right=True) - 1,
+            np.digitize(work["y_start"].to_numpy(), y_bins, right=True) - 1,
             0,
             rows - 1,
         )
@@ -330,12 +333,13 @@ def draw_pass_origin_heatmap(
         title_size = 8.2 * scale
         title_pad = 5
     short_name = player_name.split()[0] if tiny and player_name and not compare else player_name
+    pass_kind = "completos" if completed_only else "todos"
     if compare:
-        title = f"{player_name}\nOrigem · {cols}×{rows}"
+        title = f"{player_name}\nOrigem · {pass_kind} · {cols}×{rows}"
     elif tiny:
-        title = f"{short_name}\nOrigem · {match_label}"
+        title = f"{short_name}\nOrigem · {pass_kind}"
     else:
-        title = f"{player_name}\nOrigem · {cols}×{rows} · {match_label}"
+        title = f"{player_name}\nOrigem · {pass_kind} · {cols}×{rows} · {match_label}"
     ax.set_title(title, color="white", fontsize=title_size, pad=title_pad)
     if not mini and not tiny and not compare:
         _attack_arrow(fig, fig_w=fig_w)

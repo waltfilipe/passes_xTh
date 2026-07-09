@@ -71,9 +71,13 @@ fmt_pct = pe.fmt_pct
 fmt_stat_value = pe.fmt_stat_value
 load_passes_grouped = pe.load_passes_grouped
 metric_label = pe.metric_label
+analyst_metric_label = pe.analyst_metric_label
+metric_tooltip = pe.metric_tooltip
+rank_in_group_label = pe.rank_in_group_label
 rank_to_display_score = pe.rank_to_display_score
 score_display_color = pe.score_display_color
 rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
+enrich_player_eligibility = pe.enrich_player_eligibility
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -201,8 +205,113 @@ st.markdown(
     .rank-tip:hover .rank-tipbox,
     .rating-tip:hover .rating-tipbox,
     .section-rating-tip:hover .rating-tipbox,
-    .rating-warning-tip:hover .rating-tipbox {
+    .rating-warning-tip:hover .rating-tipbox,
+    .metric-tip:hover .metric-tipbox {
         display: block;
+    }
+    .metric-tip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        cursor: help;
+        border-bottom: 1px dotted #475569;
+    }
+    .metric-tipbox {
+        display: none;
+        position: absolute;
+        z-index: 120;
+        left: 0;
+        bottom: calc(100% + 6px);
+        min-width: 200px;
+        max-width: 280px;
+        background: #111827;
+        border: 1px solid #3d4f6f;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 0.72rem;
+        font-weight: 500;
+        line-height: 1.35;
+        color: #e2e8f0;
+        white-space: normal;
+        box-shadow: 0 8px 20px rgba(0,0,0,.45);
+        pointer-events: none;
+    }
+    .metric-rank-sub {
+        display: block;
+        margin-top: 0.12rem;
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: #64748b;
+        letter-spacing: 0.01em;
+    }
+    .cmp-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem 1.25rem;
+        margin-top: 0.5rem;
+    }
+    .cmp-section-title {
+        grid-column: 1 / -1;
+        color: #93c5fd;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-top: 0.35rem;
+        padding-top: 0.35rem;
+        border-top: 1px solid #1f293f;
+    }
+    .cmp-section-title:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+    .cmp-row {
+        display: grid;
+        grid-template-columns: 1.1fr 1fr 1fr;
+        gap: 0.75rem;
+        align-items: end;
+        padding: 0.45rem 0;
+        border-bottom: 1px solid #1a2236;
+    }
+    .cmp-row-head {
+        color: #94a3b8;
+        font-size: 0.74rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding-bottom: 0.2rem;
+        border-bottom: 1px solid #2a3550;
+    }
+    .cmp-cell-label { color: #cbd5e1; font-size: 0.84rem; }
+    .cmp-cell-value {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .pres-card {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 0.85rem;
+    }
+    .pres-card h4 { margin: 0 0 0.35rem 0; color: #e2e8f0; font-size: 1rem; }
+    .pres-card p { margin: 0; color: #94a3b8; font-size: 0.88rem; line-height: 1.45; }
+    .pres-step {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        margin: 0.55rem 0;
+    }
+    .pres-step-num {
+        flex-shrink: 0;
+        width: 1.55rem;
+        height: 1.55rem;
+        border-radius: 999px;
+        background: #1e3a8a;
+        color: #dbeafe;
+        font-size: 0.78rem;
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
     .stat-section-row {
         display: flex;
@@ -478,12 +587,33 @@ def _badge_text_color(hex_color: str) -> str:
     return "#1e293b" if lum > 168 else "#f8fafc"
 
 
+def _metric_label_html(key: str) -> str:
+    label = analyst_metric_label(key)
+    tip = html.escape(metric_tooltip(key))
+    return (
+        f'<span class="metric-tip">{html.escape(label)}'
+        f'<span class="metric-tipbox">{tip}</span></span>'
+    )
+
+
+def _metric_rank_subtitle_html(player: dict, key: str, metric_ranks: dict) -> str:
+    info = metric_ranks.get(key)
+    if not info:
+        return ""
+    return (
+        f'<span class="metric-rank-sub">'
+        f'{html.escape(rank_in_group_label(int(info["rank"]), player.get("position_group")))}'
+        f"</span>"
+    )
+
+
 def _metric_line_html(
     label: str,
     key: str,
     value: str,
     metric_ranks: dict,
     *,
+    player: dict | None = None,
     show_rank: bool = True,
 ) -> str:
     badge = ""
@@ -499,15 +629,18 @@ def _metric_line_html(
                 f'<span class="rank-tipbox">{rank}/{total}</span>'
                 f"</span>"
             )
-    value_html = (
+    rank_sub = _metric_rank_subtitle_html(player or {}, key, metric_ranks) if show_rank and player else ""
+    value_inner = (
         f'<span class="val-wrap">{badge}<span class="stat-val">{html.escape(value)}</span></span>'
+        f"{rank_sub}"
         if badge
-        else f'<span class="stat-val">{html.escape(value)}</span>'
+        else f'<span class="stat-val">{html.escape(value)}</span>{rank_sub}'
     )
+    label_html = _metric_label_html(key) if key else html.escape(label)
     return (
         '<div class="metric-line">'
-        f"<span>{html.escape(label)}</span>"
-        f"{value_html}"
+        f"<span>{label_html}</span>"
+        f'<span style="text-align:right">{value_inner}</span>'
         "</div>"
     )
 
@@ -557,10 +690,11 @@ def _build_sections_html(
         for key in keys:
             parts.append(
                 _metric_line_html(
-                    metric_label(key),
+                    analyst_metric_label(key),
                     key,
                     _stat_display(player, key),
                     metric_ranks,
+                    player=player,
                     show_rank=show_rank,
                 )
             )
@@ -612,16 +746,27 @@ def _player_card_html(
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_map1, col_map2 = st.columns(2, gap="small")
+    col_map1, col_map2, col_map3 = st.columns(3, gap="small")
 
     if passes is None or passes.empty:
         with col_map1:
-            st.warning("Sem passes de impacto para este jogador.")
+            st.warning("Sem passes para este jogador.")
     else:
         with col_map1:
+            st.caption("Origem — todos os passes")
+            fig_all = draw_pass_origin_heatmap(
+                passes,
+                player["player_name"],
+                team_label,
+                completed_only=False,
+            )
+            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+        with col_map2:
+            st.caption("Passes de impacto")
             fig = draw_impact_pass_map(passes, player["player_name"], team_label, compact=False)
             st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with col_map2:
+        with col_map3:
+            st.caption("Destino — heatmap")
             fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
             st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
 
@@ -746,6 +891,244 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
             )
 
 
+def _group_players_by_position_group(players: list[dict]) -> dict[str, list[dict]]:
+    by_group: dict[str, list[dict]] = {}
+    for player in players:
+        group = str(player.get("position_group") or "—")
+        by_group.setdefault(group, []).append(player)
+    return by_group
+
+
+def _eligible_pool_for_player(player: dict, pool_by_group: dict[str, list[dict]]) -> list[dict]:
+    group = str(player.get("position_group") or "—")
+    pool = pool_by_group.get(group, [])
+    eligible = [p for p in pool if p.get("eligible_for_rating")]
+    return eligible if eligible else list(pool)
+
+
+def _player_metric_ranks(player: dict, pool_by_group: dict[str, list[dict]]) -> dict:
+    pool = _eligible_pool_for_player(player, pool_by_group)
+    if not pool:
+        return {}
+    if player.get("metric_ranks") and player.get("player_id") in {p["player_id"] for p in pool}:
+        return dict(player.get("metric_ranks") or {})
+    rated = rate_player_vs_eligible_pool(player, pool)
+    return dict(rated.get("metric_ranks") or {})
+
+
+def _comparison_metrics_html(
+    target: dict,
+    similar: dict,
+    *,
+    target_league: str,
+    similar_league: str,
+    target_pct: dict[str, float],
+    similar_pct: dict[str, float],
+    target_ranks: dict,
+    similar_ranks: dict,
+) -> str:
+    rows = [
+        '<div class="player-card">',
+        '<div class="cmp-row cmp-row-head">',
+        "<span>Métrica</span>",
+        f"<span>{html.escape(target_league)}</span>",
+        f"<span>{html.escape(similar_league)}</span>",
+        "</div>",
+    ]
+    for section_name, section_keys in sim.SIMILARITY_COMPARE_SECTIONS:
+        rows.append(f'<div class="cmp-section-title">{html.escape(section_name)}</div>')
+        for key in section_keys:
+            label = _metric_label_html(key)
+            t_rank = _metric_rank_subtitle_html(target, key, target_ranks)
+            s_rank = _metric_rank_subtitle_html(similar, key, similar_ranks)
+            rows.extend([
+                '<div class="cmp-row">',
+                f'<span class="cmp-cell-label">{label}</span>',
+                (
+                    f'<span><span class="cmp-cell-value">'
+                    f'{html.escape(sim.fmt_percentile_value(target_pct.get(key)))}</span>{t_rank}</span>'
+                ),
+                (
+                    f'<span><span class="cmp-cell-value">'
+                    f'{html.escape(sim.fmt_percentile_value(similar_pct.get(key)))}</span>{s_rank}</span>'
+                ),
+                "</div>",
+            ])
+    rows.append("</div>")
+    return "".join(rows)
+
+
+def _render_comparison_maps_row(
+    target: dict,
+    similar: dict,
+    target_passes,
+    similar_passes,
+    *,
+    target_league: str,
+    similar_league: str,
+) -> None:
+    m1, m2, m3 = st.columns(3, gap="small")
+    name_t = str(target.get("player_name", "—"))
+    name_s = str(similar.get("player_name", "—"))
+    with m1:
+        st.caption(f"Todos os passes · {target_league}")
+        if target_passes is not None and not target_passes.empty:
+            fig = draw_pass_origin_heatmap(
+                target_passes,
+                name_t,
+                str(target.get("team", "—")),
+                cols=sim.ORIGIN_GRID_COLS,
+                rows=sim.ORIGIN_GRID_ROWS,
+                completed_only=False,
+                compare=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("Sem passes.")
+    with m2:
+        st.caption(f"Origem (completos) · {name_t}")
+        if target_passes is not None and not target_passes.empty:
+            fig = draw_pass_origin_heatmap(
+                target_passes,
+                name_t,
+                str(target.get("team", "—")),
+                cols=sim.ORIGIN_GRID_COLS,
+                rows=sim.ORIGIN_GRID_ROWS,
+                compare=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("Sem passes.")
+    with m3:
+        st.caption(f"Origem (completos) · {name_s}")
+        if similar_passes is not None and not similar_passes.empty:
+            fig = draw_pass_origin_heatmap(
+                similar_passes,
+                name_s,
+                str(similar.get("team", "—")),
+                cols=sim.ORIGIN_GRID_COLS,
+                rows=sim.ORIGIN_GRID_ROWS,
+                compare=True,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        else:
+            st.caption("Sem passes.")
+
+
+def render_presentation_tab(
+    all_players: list[dict],
+    passes_by_player: dict,
+) -> None:
+    st.subheader("Apresentação")
+    st.markdown(
+        "Guia rápido do **Passes xTh**: o que cada visual mostra e como interpretar "
+        "os números na prática de scouting."
+    )
+
+    st.markdown(
+        '<div class="pres-card"><h4>O que é este dashboard?</h4>'
+        "<p>Medimos a qualidade dos passes com um modelo de <strong>expected threat (xT)</strong>. "
+        "Passes que aumentam a probabilidade de gol valem mais. O rating resume o jogador "
+        "frente aos pares da <strong>mesma posição</strong> na Série B.</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    example = next(
+        (
+            p for p in all_players
+            if passes_by_player.get(str(p["player_id"])) is not None
+            and not passes_by_player[str(p["player_id"])].empty
+        ),
+        None,
+    )
+    if example:
+        ex_id = str(example["player_id"])
+        ex_passes = passes_by_player[ex_id]
+        ex_name = str(example.get("player_name", "Jogador"))
+        st.markdown("#### Exemplo visual — três mapas")
+        st.caption(f"Referência: {ex_name} ({example.get('team', '—')})")
+        c1, c2, c3 = st.columns(3, gap="small")
+        with c1:
+            st.markdown(
+                '<div class="pres-card"><h4>1 · Todos os passes</h4>'
+                "<p>Onde o jogador <em>tenta</em> passar — completos e incompletos. "
+                "Mostra zonas de atuação e volume espacial.</p></div>",
+                unsafe_allow_html=True,
+            )
+            fig = draw_pass_origin_heatmap(
+                ex_passes, ex_name, str(example.get("team", "—")), completed_only=False,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        with c2:
+            st.markdown(
+                '<div class="pres-card"><h4>2 · Passes de impacto</h4>'
+                "<p>Setas dos passes que mudam o xT de forma relevante. "
+                "Cores destacam progressão e alto impacto.</p></div>",
+                unsafe_allow_html=True,
+            )
+            fig = draw_impact_pass_map(ex_passes, ex_name, str(example.get("team", "—")), compact=False)
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        with c3:
+            st.markdown(
+                '<div class="pres-card"><h4>3 · Destino (heatmap)</h4>'
+                "<p>Para onde os passes de impacto <em>chegam</em>. "
+                "Útil para ver penetração e zonas de recepção.</p></div>",
+                unsafe_allow_html=True,
+            )
+            fig = draw_pass_destination_heatmap(
+                ex_passes, ex_name, str(example.get("team", "—")), compact=False,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+
+    st.markdown("#### Métricas e rating")
+    col_m1, col_m2 = st.columns(2, gap="medium")
+    with col_m1:
+        st.markdown(
+            '<div class="pres-card"><h4>Blocos de métricas</h4>'
+            "<p><strong>Absolutas</strong> — volume por 90 min.<br>"
+            "<strong>Relativas</strong> — eficiência por passe.<br>"
+            "<strong>Long balls</strong> — jogo vertical.<br>"
+            "<strong>Construção</strong> — saída e meio.<br>"
+            "<strong>Agressão</strong> — último terço e penetração.</p></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="pres-card"><h4>Ranking na posição</h4>'
+            "<p>Abaixo de cada valor aparece, por exemplo, "
+            "<em>23º em Laterais</em> — posição do jogador entre aptos do grupo. "
+            "Passe o mouse no nome da métrica para ver a definição.</p></div>",
+            unsafe_allow_html=True,
+        )
+    with col_m2:
+        st.markdown(
+            '<div class="pres-card"><h4>Rating geral (0–10)</h4>'
+            "<p>Média ponderada dos ranks nas métricas principais. "
+            "Verde = topo do grupo; amarelo = meio; vermelho = abaixo.</p></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="pres-card"><h4>Similaridade B ↔ A</h4>'
+            "<p>Compare jogadores entre Série B e Série A na mesma posição detalhada. "
+            "Três modos: percentil (Opção A), z-score (Opção C) e origem dos passes. "
+            "Na comparação, três mapas mostram volume total e origem dos completos.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("#### Como usar")
+    steps = [
+        ("Dashboard", "Escolha posição e jogador; leia mapas + cards de métricas."),
+        ("Similaridade", "Selecione um atleta e veja os 10 mais parecidos na outra liga."),
+        ("Comparação", "Clique em uma linha para ver mapas lado a lado e percentis por métrica."),
+    ]
+    for idx, (title, text) in enumerate(steps, start=1):
+        st.markdown(
+            f'<div class="pres-step"><span class="pres-step-num">{idx}</span>'
+            f"<div><strong>{html.escape(title)}</strong><br>"
+            f'<span style="color:#94a3b8;font-size:0.88rem">{html.escape(text)}</span></div></div>',
+            unsafe_allow_html=True,
+        )
+
+
 def _render_similarity_player_panel(
     player: dict,
     passes,
@@ -774,10 +1157,10 @@ def _render_similarity_player_panel(
         g2.metric("Passes", fmt_stat_value("passes_completed", player.get("passes_completed")))
 
     profile = sim.pass_origin_profile(passes) if passes is not None else None
-    if profile is not None:
+    if profile is not None and not comparison_mode:
         st.caption(f"Origem dominante: {sim.describe_dominant_origin_zone(profile)}")
 
-    if passes is not None and not passes.empty:
+    if not comparison_mode and passes is not None and not passes.empty:
         fig = draw_pass_origin_heatmap(
             passes,
             str(player.get("player_name", "—")),
@@ -844,6 +1227,8 @@ def _render_similarity_results_tab(
     similar_league: str,
     target_pool_by_pos: dict[str, list[dict]],
     similar_pool_by_pos: dict[str, list[dict]],
+    target_pool_by_group: dict[str, list[dict]],
+    similar_pool_by_group: dict[str, list[dict]],
     pick_key: str,
     include_origin: bool = False,
     origin_dual: bool = False,
@@ -894,15 +1279,25 @@ def _render_similarity_results_tab(
     compare_keys = sim.SIMILARITY_METRICS_A
     target_pct = sim.position_pool_percentiles(target, target_pool_by_pos, keys=compare_keys)
     similar_pct = sim.position_pool_percentiles(similar, similar_pool_by_pos, keys=compare_keys)
+    target_ranks = _player_metric_ranks(target, target_pool_by_group)
+    similar_ranks = _player_metric_ranks(similar, similar_pool_by_group)
     target_pos = sim.player_search_position(target) or "—"
     similar_pos = sim.player_search_position(similar) or "—"
 
     st.markdown("#### Comparação")
     st.caption(
-        f"Percentis na posição detalhada em cada liga "
+        f"Percentis na posição detalhada · ranks no grupo de posição "
         f"({html.escape(target_pos)} · {html.escape(target_league)} vs "
-        f"{html.escape(similar_pos)} · {html.escape(similar_league)}). "
-        "Métricas alinhadas ao rating do dashboard."
+        f"{html.escape(similar_pos)} · {html.escape(similar_league)})."
+    )
+
+    _render_comparison_maps_row(
+        target,
+        similar,
+        target_passes,
+        similar_passes,
+        target_league=target_league,
+        similar_league=similar_league,
     )
 
     col_target, col_similar = st.columns(2, gap="small")
@@ -929,16 +1324,19 @@ def _render_similarity_results_tab(
                 f"{float(similar['origin_similarity_pct']):.1f}%"
             )
 
-    compare_rows = []
-    for section_name, section_keys in sim.SIMILARITY_COMPARE_SECTIONS:
-        for key in section_keys:
-            compare_rows.append({
-                "Seção": section_name,
-                "Métrica": metric_label(key),
-                f"Referência ({target_league})": sim.fmt_percentile_value(target_pct.get(key)),
-                f"Similar ({similar_league})": sim.fmt_percentile_value(similar_pct.get(key)),
-            })
-    st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
+    st.markdown(
+        _comparison_metrics_html(
+            target,
+            similar,
+            target_league=target_league,
+            similar_league=similar_league,
+            target_pct=target_pct,
+            similar_pct=similar_pct,
+            target_ranks=target_ranks,
+            similar_ranks=similar_ranks,
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_similarity_section(
@@ -969,18 +1367,22 @@ def render_similarity_section(
         )
         return
 
+    sb_enriched = enrich_player_eligibility(all_players)
+    serie_a_enriched = enrich_player_eligibility(serie_a_players)
     prefix = "ba" if sb_to_sa else "ab"
-    serie_a_by_pos = sim.group_players_by_detailed_position(serie_a_players)
-    sb_by_pos = sim.group_players_by_detailed_position(all_players)
-    players_sb_by_id = {str(p["player_id"]): p for p in all_players}
-    players_sa_by_id = {str(p["player_id"]): p for p in serie_a_players}
+    serie_a_by_pos = sim.group_players_by_detailed_position(serie_a_enriched)
+    sb_by_pos = sim.group_players_by_detailed_position(sb_enriched)
+    serie_a_by_group = _group_players_by_position_group(serie_a_enriched)
+    sb_by_group = _group_players_by_position_group(sb_enriched)
+    players_sb_by_id = {str(p["player_id"]): p for p in sb_enriched}
+    players_sa_by_id = {str(p["player_id"]): p for p in serie_a_enriched}
 
     if sb_to_sa:
-        options = _player_options(all_players)
+        options = _player_options(sb_enriched)
         select_label = "Jogador Série B"
         select_key = SIMILARITY_SELECT_SB_KEY
     else:
-        options = _player_options(serie_a_players)
+        options = _player_options(serie_a_enriched)
         select_label = "Jogador Série A"
         select_key = SIMILARITY_SELECT_SA_KEY
 
@@ -1008,7 +1410,7 @@ def render_similarity_section(
         target = dict(players_sb_by_id[target_id])
         target_passes = passes_by_player_sb.get(target_id)
         pool = sim.similarity_search_pool(serie_a_by_pos, search_pos)
-        full_dest_pool = sim.outfield_players(serie_a_players)
+        full_dest_pool = sim.outfield_players(serie_a_enriched)
         pool_passes = serie_a_passes
         pool_label = f"Série A · {search_pos or '—'}"
         origin_pool_label = f"Série A · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
@@ -1017,7 +1419,7 @@ def render_similarity_section(
         target = dict(players_sa_by_id[target_id])
         target_passes = serie_a_passes.get(target_id)
         pool = sim.similarity_search_pool(sb_by_pos, search_pos)
-        full_dest_pool = sim.outfield_players(all_players)
+        full_dest_pool = sim.outfield_players(sb_enriched)
         pool_passes = passes_by_player_sb
         pool_label = f"Série B · {search_pos or '—'}"
         origin_pool_label = f"Série B · origem similar (todas posições, top {sim.ORIGIN_PREFILTER_TOP_N})"
@@ -1066,6 +1468,8 @@ def render_similarity_section(
             similar_league=similar_league_label,
             target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
             similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
+            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
+            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
             pick_key=f"sim_{prefix}_pick_a",
             include_origin=False,
         )
@@ -1093,6 +1497,8 @@ def render_similarity_section(
             similar_league=similar_league_label,
             target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
             similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
+            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
+            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
             pick_key=f"sim_{prefix}_pick_c",
             include_origin=False,
             origin_column=True,
@@ -1129,6 +1535,8 @@ def render_similarity_section(
             similar_league=similar_league_label,
             target_pool_by_pos=sb_by_pos if sb_to_sa else serie_a_by_pos,
             similar_pool_by_pos=serie_a_by_pos if sb_to_sa else sb_by_pos,
+            target_pool_by_group=sb_by_group if sb_to_sa else serie_a_by_group,
+            similar_pool_by_group=serie_a_by_group if sb_to_sa else sb_by_group,
             pick_key=f"sim_{prefix}_pick_origin",
             origin_dual=True,
         )
@@ -1162,9 +1570,11 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_dashboard, tab_sim_ba, tab_sim_ab = st.tabs(
-        ["Dashboard", "Similaridade B->A", "Similaridade A->B"]
+    tab_pres, tab_dashboard, tab_sim_ba, tab_sim_ab = st.tabs(
+        ["Apresentação", "Dashboard", "Similaridade B->A", "Similaridade A->B"]
     )
+    with tab_pres:
+        render_presentation_tab(all_players, passes_by_player)
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
         st.divider()

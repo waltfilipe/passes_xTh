@@ -147,6 +147,50 @@ METRIC_LABELS: dict[str, str] = {
     "long_balls": "Long Passes",
 }
 
+ANALYST_METRIC_LABELS: dict[str, str] = {
+    "impact_passes_p90": "Volume de impacto (p90)",
+    "phi_p90": "Alto impacto — volume (p90)",
+    "dxt_p90": "Ganho de xT (p90)",
+    "impact_per_pass": "Eficiência de impacto",
+    "phi_per_pass": "Eficiência de alto impacto",
+    "dxt_per_pass": "Ganho médio de xT por passe",
+    "dxt_gt_01_pct": "Passes decisivos (ΔxT > 0,1)",
+    "long_balls": "Bolas longas tentadas",
+    "long_impact_passes": "Bolas longas de impacto",
+    "long_impact_per_long_pass": "Impacto por bola longa",
+    "construction_aip": "Construção — volume de impacto",
+    "construction_aip_per_pass": "Construção — eficiência",
+    "aggression_aip": "Agressão — volume de impacto",
+    "aggression_aip_per_pass": "Agressão — eficiência",
+    "minutes": "Minutos em campo",
+    "passes_completed": "Passes completos",
+    "minutes_pct": "Minutos (% do líder da posição)",
+    "impact_passes": "Passes de impacto (total)",
+    "high_impact_passes": "Passes de alto impacto (total)",
+}
+
+METRIC_TOOLTIPS: dict[str, str] = {
+    "impact_passes_p90": "Quantos passes de impacto o jogador faz a cada 90 minutos.",
+    "phi_p90": "Passes de alto impacto (PHI) por 90 min — volume de ações que mudam o jogo.",
+    "dxt_p90": "Soma do ganho de expected threat (xT) dos passes, normalizada por 90 min.",
+    "impact_per_pass": "Proporção de passes completos classificados como de impacto.",
+    "phi_per_pass": "Proporção de passes classificados como alto impacto (PHI).",
+    "dxt_per_pass": "Ganho médio de xT em cada passe completado.",
+    "dxt_gt_01_pct": "Percentual de passes com ganho de xT acima de 0,1 (passes decisivos).",
+    "long_balls": "Total de bolas longas tentadas na amostra.",
+    "long_impact_passes": "Bolas longas que geraram impacto no modelo xT.",
+    "long_impact_per_long_pass": "Taxa de bolas longas que se tornam passes de impacto.",
+    "construction_aip": "Impacto acumulado em passes de construção (saída e meio).",
+    "construction_aip_per_pass": "Eficiência dos passes de construção.",
+    "aggression_aip": "Impacto em passes agressivos (último terço / penetração).",
+    "aggression_aip_per_pass": "Eficiência dos passes agressivos.",
+    "minutes": "Minutos jogados na temporada analisada.",
+    "passes_completed": "Total de passes completos.",
+    "minutes_pct": "Minutos do jogador em relação ao máximo da posição.",
+    "impact_passes": "Contagem total de passes de impacto.",
+    "high_impact_passes": "Contagem total de passes de alto impacto (PHI).",
+}
+
 TOOLTIP_EXTRA_KEYS: tuple[str, ...] = ("minutes", "passes_completed")
 
 ABSOLUTE_METRIC_KEYS: tuple[str, ...] = (
@@ -1515,6 +1559,19 @@ def build_analytics(
 
 def metric_label(key: str) -> str:
     return TOOLTIP_LABELS.get(key, key.replace("_", " ").title())
+
+
+def analyst_metric_label(key: str) -> str:
+    return ANALYST_METRIC_LABELS.get(key, metric_label(key))
+
+
+def metric_tooltip(key: str) -> str:
+    return METRIC_TOOLTIPS.get(key, analyst_metric_label(key))
+
+
+def rank_in_group_label(rank: int, position_group: str | None) -> str:
+    group = str(position_group or "—").strip()
+    return f"{int(rank)}º em {group}"
 
 
 def fmt_smart(value, *, max_decimals: int = 4) -> str:
