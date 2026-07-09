@@ -374,12 +374,26 @@ st.markdown(
     }
     .grade-accordion-body .metric-line:last-child { border-bottom: none; }
     .sidebar-stack { display: flex; flex-direction: column; gap: 0.35rem; }
+    .dashboard-maps-stack {
+        min-height: 33rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 0.2rem;
+    }
     .dashboard-maps-stack [data-testid="stPyplot"] {
         margin-bottom: 0 !important;
         padding-bottom: 0 !important;
     }
+    .dashboard-maps-stack [data-testid="column"] {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
     div[data-testid="column"] [data-testid="stPyplot"] img {
         display: block;
+        width: 100% !important;
+        height: auto !important;
+        object-fit: contain;
     }
     .dashboard-sidebar-col {
         height: 100%;
@@ -388,8 +402,28 @@ st.markdown(
     .dashboard-sidebar-stack {
         height: 100%;
         min-height: 33rem;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 0.28rem;
+    }
+    .dashboard-sidebar-col [data-testid="stExpander"] {
+        margin-bottom: 0.2rem;
+        flex: 1 1 0;
+        min-height: 2.65rem;
+    }
+    .dashboard-sidebar-col [data-testid="stExpander"] details {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+    }
+    .dashboard-sidebar-col [data-testid="stExpander"] summary {
+        font-weight: 600;
+        font-size: 0.82rem;
+        color: #e2e8f0;
+        padding: 0.5rem 0.65rem;
+    }
+    .dashboard-sidebar-col [data-testid="stExpander"] [data-testid="stMarkdownContainer"] {
+        padding: 0 0.65rem 0.55rem;
+        border-top: 1px solid #1f293f;
     }
     .dashboard-sidebar-stack .player-info-card {
         flex: 0 0 auto;
@@ -898,15 +932,16 @@ def _section_grade_summary_bits(
     )
 
 
-def _section_grade_accordion_html(
-    player: dict,
-    section_key: str,
-    title: str,
-    keys: tuple[str, ...],
-) -> str:
-    summary_main = _section_grade_summary_bits(player, section_key, title)
+def _section_expander_label(player: dict, section_key: str, title: str) -> str:
+    section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
+    score = section_ratings.get(section_key)
+    grade = fmt_rating_score(score) if score is not None else "—"
+    return f"{title}  ·  {grade}"
+
+
+def _section_grade_body_html(player: dict, keys: tuple[str, ...]) -> str:
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
-    lines = "".join(
+    return "".join(
         _metric_line_html(
             analyst_metric_label(key),
             key,
@@ -916,15 +951,6 @@ def _section_grade_accordion_html(
             show_rank=True,
         )
         for key in keys
-    )
-    return (
-        '<details class="grade-accordion">'
-        "<summary>"
-        '<span class="grade-arrow">›</span>'
-        f"{summary_main}"
-        "</summary>"
-        f'<div class="grade-accordion-body">{lines}</div>'
-        "</details>"
     )
 
 
@@ -949,7 +975,7 @@ def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tupl
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
+    col_maps, col_side = st.columns([1.55, 0.85], gap="small")
 
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         (
@@ -974,44 +1000,51 @@ def render_player_layout(player: dict, passes) -> None:
         + _build_sections_html(player, metric_ranks, general_sections)
         + "</div>"
     )
-    pillar_html = "".join(
-        _section_grade_accordion_html(player, section_key, title, keys)
-        for section_key, title, _subtitle, keys in SCOUT_SECTION_SPECS
-    )
-    sidebar_html = (
-        '<div class="dashboard-sidebar-col">'
-        '<div class="sidebar-stack dashboard-sidebar-stack">'
-        f"{general_card}"
-        f"{pillar_html}"
-        "</div></div>"
-    )
 
     with col_maps:
+        st.markdown('<div class="dashboard-maps-stack">', unsafe_allow_html=True)
         if passes is None or passes.empty:
             st.warning("Sem passes para este jogador.")
         else:
-            map_top_l, map_top_r = st.columns(2, gap="small")
-            with map_top_l:
+            r1c1, r1c2 = st.columns(2, gap="small")
+            with r1c1:
+                fig_completed = draw_all_completed_passes_map(
+                    passes, player["player_name"], team_label, dashboard=True,
+                )
+                st.pyplot(fig_completed, clear_figure=True, use_container_width=True)
+            with r1c2:
+                fig_dest_completed = draw_pass_destination_heatmap(
+                    passes,
+                    player["player_name"],
+                    team_label,
+                    dashboard=True,
+                    impact_only=False,
+                )
+                st.pyplot(fig_dest_completed, clear_figure=True, use_container_width=True)
+
+            r2c1, r2c2 = st.columns(2, gap="small")
+            with r2c1:
                 fig_impact = draw_impact_pass_map(
                     passes, player["player_name"], team_label, dashboard=True,
                 )
                 st.pyplot(fig_impact, clear_figure=True, use_container_width=True)
-            with map_top_r:
-                fig_dest = draw_pass_destination_heatmap(
+            with r2c2:
+                fig_dest_impact = draw_pass_destination_heatmap(
                     passes, player["player_name"], team_label, dashboard=True,
                 )
-                st.pyplot(fig_dest, clear_figure=True, use_container_width=True)
-
-            fig_all = draw_all_completed_passes_map(
-                passes,
-                player["player_name"],
-                team_label,
-                dashboard_large=True,
-            )
-            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
+                st.pyplot(fig_dest_impact, clear_figure=True, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_side:
-        st.markdown(sidebar_html, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="dashboard-sidebar-col"><div class="sidebar-stack dashboard-sidebar-stack">',
+            unsafe_allow_html=True,
+        )
+        st.markdown(general_card, unsafe_allow_html=True)
+        for i, (section_key, title, _subtitle, keys) in enumerate(SCOUT_SECTION_SPECS):
+            with st.expander(_section_expander_label(player, section_key, title), expanded=(i == 0)):
+                st.markdown(_section_grade_body_html(player, keys), unsafe_allow_html=True)
+        st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def render_map_section(
@@ -1228,34 +1261,51 @@ def render_presentation_tab(
         ex_id = str(example["player_id"])
         ex_passes = passes_by_player[ex_id]
         ex_name = str(example.get("player_name", "Jogador"))
-        st.markdown("#### Exemplo visual — três mapas")
+        st.markdown("#### Exemplo visual — quatro mapas (grid 2×2)")
         st.caption(f"Referência: {ex_name} ({example.get('team', '—')})")
-        c1, c2, c3 = st.columns(3, gap="small")
-        with c1:
+        st.markdown(
+            '<div class="pres-card"><p>No <strong>Dashboard</strong>, os quatro mapas ficam do mesmo tamanho: '
+            "completos e destino na linha de cima; impact e destino de impact embaixo.</p></div>",
+            unsafe_allow_html=True,
+        )
+        r1c1, r1c2 = st.columns(2, gap="small")
+        with r1c1:
             st.markdown(
-                '<div class="pres-card"><h4>1 · Passes completos</h4>'
-                "<p>Cada passe <em>completado</em> no campo — origem e trajeto. "
-                "Mostra onde o jogador circula com a bola nos pés.</p></div>",
+                '<div class="pres-card"><h4>Passes completos</h4>'
+                "<p>Cada passe <em>completado</em> — origem e trajeto.</p></div>",
                 unsafe_allow_html=True,
             )
             fig = draw_all_completed_passes_map(
                 ex_passes, ex_name, str(example.get("team", "—")), compact=False,
             )
             st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with c2:
+        with r1c2:
             st.markdown(
-                '<div class="pres-card"><h4>2 · Passes de impacto</h4>'
-                "<p>Subset que muda o xT de forma relevante. "
-                "Cores destacam progressão e alto impacto.</p></div>",
+                '<div class="pres-card"><h4>Destino · completos</h4>'
+                "<p>Heatmap de onde os passes completos <em>chegam</em>.</p></div>",
+                unsafe_allow_html=True,
+            )
+            fig = draw_pass_destination_heatmap(
+                ex_passes,
+                ex_name,
+                str(example.get("team", "—")),
+                compact=False,
+                impact_only=False,
+            )
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+        r2c1, r2c2 = st.columns(2, gap="small")
+        with r2c1:
+            st.markdown(
+                '<div class="pres-card"><h4>Passes de impacto</h4>'
+                "<p>Subset que muda o xT de forma relevante.</p></div>",
                 unsafe_allow_html=True,
             )
             fig = draw_impact_pass_map(ex_passes, ex_name, str(example.get("team", "—")), compact=False)
             st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with c3:
+        with r2c2:
             st.markdown(
-                '<div class="pres-card"><h4>3 · Destino (heatmap)</h4>'
-                "<p>Para onde os passes de impacto <em>chegam</em>. "
-                "Útil para ver penetração e zonas de recepção.</p></div>",
+                '<div class="pres-card"><h4>Destino · impact</h4>'
+                "<p>Heatmap de destino dos passes de impacto.</p></div>",
                 unsafe_allow_html=True,
             )
             fig = draw_pass_destination_heatmap(
@@ -1271,7 +1321,7 @@ def render_presentation_tab(
     st.markdown(
         '<div class="pres-card"><h4>Cards com nota por pilar</h4>'
         "<p>À direita dos mapas: card geral no topo e pilares abaixo. "
-        "Clique na <strong>seta</strong> de cada pilar para ver as métricas.</p>"
+        "Clique em cada <strong>pilar</strong> para expandir e ver as métricas.</p>"
         f"<ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
         f"font-size:0.88rem;line-height:1.5'>{pillar_lines}</ul></div>",
         unsafe_allow_html=True,

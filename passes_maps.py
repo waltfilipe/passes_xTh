@@ -117,6 +117,32 @@ def _attack_arrow(fig, *, fig_w: float, has_cbar: bool = False) -> None:
     )
 
 
+def _bottom_colorbar(
+    fig,
+    ax,
+    norm: Normalize,
+    cmap,
+    *,
+    label: str,
+    scale: float,
+) -> None:
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    cbar = fig.colorbar(
+        sm,
+        ax=ax,
+        orientation="horizontal",
+        fraction=0.052,
+        pad=0.03,
+        aspect=28,
+    )
+    cbar.ax.tick_params(color="#ffffff", labelsize=5.5 * scale, length=2)
+    cbar.ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
+    )
+    plt.setp(cbar.ax.axes.get_xticklabels(), color="#ffffff")
+    cbar.set_label(label, color="#c7cdda", fontsize=6.2 * scale, labelpad=2)
+
+
 def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: float) -> None:
     pitch.arrows(
         x1, y1, x2, y2,
@@ -198,10 +224,11 @@ def draw_all_completed_passes_map(
     ]
     _add_map_legend(ax, legend_handles, fig_w=fig_w)
     ax.set_title(
-        f"{player_name}\nPasses completos · {match_label}",
-        color="white", fontsize=8.4 * scale, pad=5,
+        "Passes completos" if dashboard else f"{player_name}\nPasses completos · {match_label}",
+        color="white", fontsize=8.0 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
-    _attack_arrow(fig, fig_w=fig_w)
+    if not dashboard and not dashboard_large:
+        _attack_arrow(fig, fig_w=fig_w)
     return fig
 
 
@@ -253,10 +280,11 @@ def draw_impact_pass_map(
     ]
     _add_map_legend(ax, legend_handles, fig_w=fig_w)
     ax.set_title(
-        f"{player_name}\nPasses Impact · {match_label}",
-        color="white", fontsize=8.4 * scale, pad=5,
+        "Passes impact" if dashboard else f"{player_name}\nPasses Impact · {match_label}",
+        color="white", fontsize=8.0 * scale if dashboard else 8.4 * scale, pad=4 if dashboard else 5,
     )
-    _attack_arrow(fig, fig_w=fig_w)
+    if not dashboard and not dashboard_large:
+        _attack_arrow(fig, fig_w=fig_w)
     return fig
 
 
@@ -265,25 +293,31 @@ def draw_pass_destination_heatmap(
     player_name: str,
     match_label: str = "todos os jogos",
     *,
+    impact_only: bool = True,
     compact: bool = True,
     dashboard: bool = False,
     dashboard_large: bool = False,
 ):
-    """12×8 heatmap of completed impact pass end locations."""
+    """12×8 heatmap of pass end locations (impact or all completed)."""
     figsize, dpi = _resolve_figsize(
         compact=compact, dashboard=dashboard, dashboard_large=dashboard_large,
     )
 
     fig_w = figsize[0]
     scale = _map_scale(fig_w)
-    completed = passes[passes["impact_success"] & passes["has_end"]].copy()
+    if passes is None or passes.empty:
+        completed = passes
+    elif impact_only:
+        completed = passes[passes["impact_success"] & passes["has_end"]].copy()
+    else:
+        completed = passes[passes["is_won"].astype(bool) & passes["has_end"].astype(bool)].copy()
     fig, ax, pitch = _base_pitch(figsize=figsize, dpi=dpi)
 
     x_bins = np.linspace(0.0, FIELD_X, PASS_DEST_HEATMAP_COLS + 1)
     y_bins = np.linspace(0.0, FIELD_Y, PASS_DEST_HEATMAP_ROWS + 1)
     grid = np.zeros((PASS_DEST_HEATMAP_ROWS, PASS_DEST_HEATMAP_COLS), dtype=float)
 
-    if not completed.empty:
+    if completed is not None and not completed.empty:
         x_idx = np.clip(
             np.digitize(completed["x_end"].to_numpy(), x_bins, right=True) - 1,
             0,
@@ -317,17 +351,26 @@ def draw_pass_destination_heatmap(
             )
 
     pitch.draw(ax=ax)
-    sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
-    cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
-    cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}"))
-    cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
-    plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
-    cbar.set_label("Passes impact", color="#c7cdda", fontsize=7 * scale)
-    ax.set_title(
-        f"{player_name}\nDestino — passes impact · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
-        color="white", fontsize=8.2 * scale, pad=5,
-    )
-    _attack_arrow(fig, fig_w=fig_w)
+    cbar_label = "Passes impact" if impact_only else "Passes completos"
+    if dashboard or dashboard_large:
+        _bottom_colorbar(fig, ax, norm, CMAP_PASS_DEST, label=cbar_label, scale=scale)
+        title = "Destino · impact" if impact_only else "Destino · completos"
+        ax.set_title(title, color="white", fontsize=8.0 * scale, pad=4)
+    else:
+        sm = plt.cm.ScalarMappable(cmap=CMAP_PASS_DEST, norm=norm)
+        cbar = fig.colorbar(sm, ax=ax, fraction=0.022, pad=0.02, shrink=0.55)
+        cbar.ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
+        )
+        cbar.ax.yaxis.set_tick_params(color="#ffffff", labelsize=6)
+        plt.setp(cbar.ax.axes.get_yticklabels(), color="#ffffff")
+        cbar.set_label(cbar_label, color="#c7cdda", fontsize=7 * scale)
+        dest_kind = "passes impact" if impact_only else "passes completos"
+        ax.set_title(
+            f"{player_name}\nDestino — {dest_kind} · {PASS_DEST_HEATMAP_COLS}×{PASS_DEST_HEATMAP_ROWS} · {match_label}",
+            color="white", fontsize=8.2 * scale, pad=5,
+        )
+        _attack_arrow(fig, fig_w=fig_w)
     return fig
 
 
