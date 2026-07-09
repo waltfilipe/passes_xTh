@@ -374,6 +374,62 @@ st.markdown(
     }
     .grade-accordion-body .metric-line:last-child { border-bottom: none; }
     .sidebar-stack { display: flex; flex-direction: column; gap: 0.35rem; }
+    .dashboard-maps-stack [data-testid="stPyplot"] {
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
+    }
+    div[data-testid="column"] [data-testid="stPyplot"] img {
+        display: block;
+    }
+    .dashboard-sidebar-col {
+        height: 100%;
+        min-height: 0;
+    }
+    .dashboard-sidebar-stack {
+        height: 100%;
+        min-height: 33rem;
+        justify-content: space-between;
+        gap: 0.28rem;
+    }
+    .dashboard-sidebar-stack .player-info-card {
+        flex: 0 0 auto;
+        padding: 0.8rem 0.85rem;
+        margin-bottom: 0;
+    }
+    .dashboard-sidebar-stack .player-info-card h3 {
+        font-size: 1.05rem;
+    }
+    .dashboard-sidebar-stack .player-info-card .sub {
+        font-size: 0.8rem;
+    }
+    .dashboard-sidebar-stack .metric-line {
+        padding: 0.24rem 0;
+    }
+    .dashboard-sidebar-stack .grade-accordion {
+        flex: 1 1 0;
+        min-height: 2.65rem;
+        margin-bottom: 0;
+        display: flex;
+        flex-direction: column;
+    }
+    .dashboard-sidebar-stack .grade-accordion summary {
+        padding: 0.5rem 0.65rem;
+        flex: 1;
+        align-items: center;
+        min-height: 2.65rem;
+    }
+    .dashboard-sidebar-stack .grade-card-title {
+        font-size: 0.7rem;
+    }
+    .dashboard-sidebar-stack .grade-card-rank {
+        font-size: 0.68rem;
+        margin-top: 0.1rem;
+    }
+    .dashboard-sidebar-stack .section-rating-pill {
+        min-width: 46px;
+        padding: 3px 9px;
+        font-size: 0.76rem;
+    }
     .cmp-delta {
         display: inline-block;
         font-size: 0.58rem;
@@ -893,7 +949,7 @@ def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tupl
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_maps, col_side = st.columns([1.45, 1], gap="medium")
+    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
 
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         (
@@ -923,10 +979,11 @@ def render_player_layout(player: dict, passes) -> None:
         for section_key, title, _subtitle, keys in SCOUT_SECTION_SPECS
     )
     sidebar_html = (
-        '<div class="sidebar-stack">'
+        '<div class="dashboard-sidebar-col">'
+        '<div class="sidebar-stack dashboard-sidebar-stack">'
         f"{general_card}"
         f"{pillar_html}"
-        "</div>"
+        "</div></div>"
     )
 
     with col_maps:
