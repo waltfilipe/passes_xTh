@@ -16,9 +16,9 @@ FIG_W, FIG_H = 7.2, 4.8
 FIG_DPI = 220
 FIG_W_COMPACT, FIG_H_COMPACT = 6.8, 4.5
 FIG_DPI_COMPACT = 280
-FIG_W_DASHBOARD, FIG_H_DASHBOARD = 4.35, 2.88
+FIG_W_DASHBOARD, FIG_H_DASHBOARD = 4.6, 3.05
 FIG_W_DASHBOARD_LG, FIG_H_DASHBOARD_LG = 5.5, 3.55
-FIG_DPI_DASHBOARD = 175
+FIG_DPI_DASHBOARD = 260
 MAP_REF_WIDTH = 7.2
 FIELD_X, FIELD_Y = 120.0, 80.0
 PASS_DEST_HEATMAP_COLS = 12
@@ -131,16 +131,16 @@ def _bottom_colorbar(
         sm,
         ax=ax,
         orientation="horizontal",
-        fraction=0.052,
-        pad=0.03,
-        aspect=28,
+        fraction=0.028,
+        pad=0.014,
+        aspect=42,
     )
-    cbar.ax.tick_params(color="#ffffff", labelsize=5.5 * scale, length=2)
+    cbar.ax.tick_params(color="#ffffff", labelsize=4.0 * scale, length=1.5)
     cbar.ax.xaxis.set_major_formatter(
         plt.FuncFormatter(lambda v, _: f"{v:.0f}" if v == int(v) else f"{v:.1f}")
     )
     plt.setp(cbar.ax.axes.get_xticklabels(), color="#ffffff")
-    cbar.set_label(label, color="#c7cdda", fontsize=6.2 * scale, labelpad=2)
+    cbar.set_label(label, color="#94a3b8", fontsize=4.6 * scale, labelpad=1)
 
 
 def _delicate_arrows(pitch, ax, x1, y1, x2, y2, color, scale: float, *, alpha: float) -> None:

@@ -374,19 +374,8 @@ st.markdown(
     }
     .grade-accordion-body .metric-line:last-child { border-bottom: none; }
     .sidebar-stack { display: flex; flex-direction: column; gap: 0.35rem; }
-    .dashboard-maps-stack {
-        min-height: 33rem;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        gap: 0.2rem;
-    }
-    .dashboard-maps-stack [data-testid="stPyplot"] {
+    div[data-testid="column"] [data-testid="stPyplot"] {
         margin-bottom: 0 !important;
-        padding-bottom: 0 !important;
-    }
-    .dashboard-maps-stack [data-testid="column"] {
-        padding-top: 0 !important;
         padding-bottom: 0 !important;
     }
     div[data-testid="column"] [data-testid="stPyplot"] img {
@@ -395,35 +384,30 @@ st.markdown(
         height: auto !important;
         object-fit: contain;
     }
+    div[data-testid="column"] > div > div[data-testid="stVerticalBlock"] {
+        gap: 0.2rem;
+    }
+    [data-testid="stMain"] [data-testid="stHeader"] {
+        padding-top: 0.3rem;
+        padding-bottom: 0.12rem;
+    }
+    [data-testid="stMain"] [data-testid="stCaptionContainer"] p {
+        margin-bottom: 0.28rem;
+    }
+    [data-testid="stMain"] .element-container:has([data-testid="stSelectbox"]) {
+        margin-bottom: 0.15rem !important;
+    }
+    [data-testid="stMain"] div[data-testid="stCustomComponentV1"] {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
     .dashboard-sidebar-col {
         height: 100%;
         min-height: 0;
     }
     .dashboard-sidebar-stack {
-        height: 100%;
-        min-height: 33rem;
         justify-content: flex-start;
         gap: 0.28rem;
-    }
-    .dashboard-sidebar-col [data-testid="stExpander"] {
-        margin-bottom: 0.2rem;
-        flex: 1 1 0;
-        min-height: 2.65rem;
-    }
-    .dashboard-sidebar-col [data-testid="stExpander"] details {
-        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
-        border: 1px solid #2a3550;
-        border-radius: 10px;
-    }
-    .dashboard-sidebar-col [data-testid="stExpander"] summary {
-        font-weight: 600;
-        font-size: 0.82rem;
-        color: #e2e8f0;
-        padding: 0.5rem 0.65rem;
-    }
-    .dashboard-sidebar-col [data-testid="stExpander"] [data-testid="stMarkdownContainer"] {
-        padding: 0 0.65rem 0.55rem;
-        border-top: 1px solid #1f293f;
     }
     .dashboard-sidebar-stack .player-info-card {
         flex: 0 0 auto;
@@ -932,11 +916,129 @@ def _section_grade_summary_bits(
     )
 
 
-def _section_expander_label(player: dict, section_key: str, title: str) -> str:
-    section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
-    score = section_ratings.get(section_key)
-    grade = fmt_rating_score(score) if score is not None else "—"
-    return f"{title}  ·  {grade}"
+def _section_grade_accordion_html(
+    player: dict,
+    section_key: str,
+    title: str,
+    keys: tuple[str, ...],
+    *,
+    open: bool = False,
+) -> str:
+    summary_main = _section_grade_summary_bits(player, section_key, title)
+    lines = _section_grade_body_html(player, keys)
+    open_attr = " open" if open else ""
+    return (
+        f'<details class="grade-accordion"{open_attr}>'
+        "<summary>"
+        '<span class="grade-arrow">›</span>'
+        f"{summary_main}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
+    )
+
+
+def _dashboard_sidebar_page_html(player: dict) -> str:
+    general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
+        (
+            "Participação",
+            None,
+            (
+                "minutes",
+                "passes_completed",
+                "minutes_pct",
+                "impact_passes",
+                "high_impact_passes",
+            ),
+            False,
+        ),
+    ]
+    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    general_card = (
+        '<div class="player-card player-info-card">'
+        f"<h3>{html.escape(player['player_name'])}</h3>"
+        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
+        f"{_rating_header_html(player, metric_ranks)}"
+        + _build_sections_html(player, metric_ranks, general_sections)
+        + "</div>"
+    )
+    pillar_html = "".join(
+        _section_grade_accordion_html(player, section_key, title, keys, open=(i == 0))
+        for i, (section_key, title, _subtitle, keys) in enumerate(SCOUT_SECTION_SPECS)
+    )
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+body{{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#e8edf5;background:transparent}}
+.sidebar-stack{{display:flex;flex-direction:column;gap:0.28rem}}
+.player-card{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);border:1px solid #2a3550;
+  border-radius:12px;padding:0.8rem 0.85rem;margin-bottom:0}}
+.player-card h3{{margin:0 0 0.15rem 0;color:#f1f5f9;font-size:1.05rem}}
+.player-card .sub{{color:#94a3b8;font-size:0.8rem;margin-bottom:0}}
+.rating-row{{display:flex;align-items:center;flex-wrap:wrap;gap:0.55rem;margin-top:0.75rem;margin-bottom:0}}
+.rating-box{{display:inline-flex;align-items:center;justify-content:center;min-width:76px;height:50px;
+  padding:0 12px;border-radius:8px;font-size:1.55rem;font-weight:800;border:1px solid rgba(255,255,255,0.16)}}
+.rating-warning-tip{{position:relative;display:inline-flex;align-items:center}}
+.rating-warning{{font-size:1.2rem;line-height:1;cursor:help;color:#fbbf24}}
+.rating-tip,.rank-tip,.section-rating-tip{{position:relative;display:inline-flex}}
+.rating-tipbox,.rank-tipbox{{display:none;position:absolute;z-index:100;left:50%;
+  bottom:calc(100% + 6px);transform:translateX(-50%);background:#111827;border:1px solid #3d4f6f;
+  border-radius:6px;padding:4px 8px;font-size:0.72rem;color:#e2e8f0;white-space:nowrap}}
+.rating-tip:hover .rating-tipbox,.rank-tip:hover .rank-tipbox,.section-rating-tip:hover .rating-tipbox,
+.rating-warning-tip:hover .rating-tipbox,.metric-tip:hover .metric-tipbox
+{{display:block}}
+.metric-tip{{position:relative;display:inline-flex;align-items:center;cursor:help;border-bottom:1px dotted #475569}}
+.metric-tipbox{{display:none;position:absolute;z-index:120;left:0;bottom:calc(100% + 6px);min-width:200px;
+  max-width:280px;background:#111827;border:1px solid #3d4f6f;border-radius:8px;padding:8px 10px;
+  font-size:0.72rem;font-weight:500;color:#e2e8f0;line-height:1.35}}
+.stat-section-row{{display:flex;justify-content:space-between;align-items:center;gap:0.6rem;
+  margin-top:0.7rem;margin-bottom:0.25rem}}
+.stat-section{{color:#93c5fd;font-size:0.74rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase}}
+.section-rating-pill{{display:inline-flex;align-items:center;justify-content:center;min-width:46px;
+  padding:3px 9px;border-radius:6px;font-size:0.76rem;font-weight:800}}
+.metric-line{{display:flex;justify-content:space-between;gap:0.75rem;padding:0.24rem 0;
+  border-bottom:1px solid #1f293f;font-size:0.88rem;color:#cbd5e1}}
+.metric-line:last-child{{border-bottom:none}}
+.metric-line .stat-val{{font-size:1.05rem;font-weight:700;color:#f8fafc}}
+.val-wrap{{display:inline-flex;align-items:center;gap:0.5rem}}
+.rank-badge{{display:inline-block;width:12px;height:12px;min-width:12px;border-radius:3px;
+  border:1px solid rgba(255,255,255,0.2);cursor:help}}
+.metric-rank-sub{{display:block;font-size:0.68rem;color:#64748b;margin-top:0.12rem}}
+.grade-accordion{{background:linear-gradient(160deg,#151b2b 0%,#101522 100%);border:1px solid #2a3550;
+  border-radius:10px;margin-bottom:0;overflow:hidden}}
+.grade-accordion summary{{list-style:none;cursor:pointer;padding:0.5rem 0.65rem;display:flex;
+  align-items:center;gap:0.55rem;min-height:2.65rem}}
+.grade-accordion summary::-webkit-details-marker{{display:none}}
+.grade-arrow{{color:#93c5fd;font-size:0.95rem;line-height:1;transition:transform .18s ease;
+  flex-shrink:0;width:0.85rem}}
+.grade-accordion[open] .grade-arrow{{transform:rotate(90deg)}}
+.grade-summary-main{{flex:1;min-width:0}}
+.grade-summary-top{{display:flex;align-items:center;justify-content:space-between;gap:0.65rem}}
+.grade-card-title{{color:#93c5fd;font-size:0.7rem;font-weight:700;letter-spacing:0.05em;
+  text-transform:uppercase;line-height:1.25}}
+.grade-card-rank{{margin-top:0.1rem;font-size:0.68rem;color:#64748b}}
+.grade-accordion-body{{padding:0.15rem 0.85rem 0.8rem;border-top:1px solid #1f293f}}
+.grade-accordion-body .metric-line:last-child{{border-bottom:none}}
+</style>
+<script>
+function sendHeight() {{
+  const h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+  window.parent.postMessage({{type:"streamlit:setFrameHeight",height:h}},"*");
+}}
+new ResizeObserver(sendHeight).observe(document.body);
+window.addEventListener("load", sendHeight);
+document.addEventListener("toggle", sendHeight, true);
+</script></head><body>
+<div class="sidebar-stack dashboard-sidebar-stack">
+{general_card}
+{pillar_html}
+</div>
+</body></html>"""
+
+
+def render_dashboard_sidebar(player: dict) -> None:
+    components.html(_dashboard_sidebar_page_html(player), height=560, scrolling=False)
 
 
 def _section_grade_body_html(player: dict, keys: tuple[str, ...]) -> str:
@@ -975,34 +1077,9 @@ def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tupl
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    col_maps, col_side = st.columns([1.55, 0.85], gap="small")
-
-    general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
-        (
-            "Participação",
-            None,
-            (
-                "minutes",
-                "passes_completed",
-                "minutes_pct",
-                "impact_passes",
-                "high_impact_passes",
-            ),
-            False,
-        ),
-    ]
-    metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
-    general_card = (
-        '<div class="player-card player-info-card">'
-        f"<h3>{html.escape(player['player_name'])}</h3>"
-        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f"{_rating_header_html(player, metric_ranks)}"
-        + _build_sections_html(player, metric_ranks, general_sections)
-        + "</div>"
-    )
+    col_maps, col_side = st.columns([1.68, 0.72], gap="small")
 
     with col_maps:
-        st.markdown('<div class="dashboard-maps-stack">', unsafe_allow_html=True)
         if passes is None or passes.empty:
             st.warning("Sem passes para este jogador.")
         else:
@@ -1033,18 +1110,9 @@ def render_player_layout(player: dict, passes) -> None:
                     passes, player["player_name"], team_label, dashboard=True,
                 )
                 st.pyplot(fig_dest_impact, clear_figure=True, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_side:
-        st.markdown(
-            '<div class="dashboard-sidebar-col"><div class="sidebar-stack dashboard-sidebar-stack">',
-            unsafe_allow_html=True,
-        )
-        st.markdown(general_card, unsafe_allow_html=True)
-        for i, (section_key, title, _subtitle, keys) in enumerate(SCOUT_SECTION_SPECS):
-            with st.expander(_section_expander_label(player, section_key, title), expanded=(i == 0)):
-                st.markdown(_section_grade_body_html(player, keys), unsafe_allow_html=True)
-        st.markdown("</div></div>", unsafe_allow_html=True)
+        render_dashboard_sidebar(player)
 
 
 def render_map_section(
@@ -1321,7 +1389,7 @@ def render_presentation_tab(
     st.markdown(
         '<div class="pres-card"><h4>Cards com nota por pilar</h4>'
         "<p>À direita dos mapas: card geral no topo e pilares abaixo. "
-        "Clique em cada <strong>pilar</strong> para expandir e ver as métricas.</p>"
+        "Clique na <strong>seta</strong> de cada pilar para ver as métricas.</p>"
         f"<ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
         f"font-size:0.88rem;line-height:1.5'>{pillar_lines}</ul></div>",
         unsafe_allow_html=True,
@@ -1354,7 +1422,7 @@ def render_presentation_tab(
     st.markdown("#### Como usar")
     steps = [
         ("Apresentação", "Entenda mapas, pilares e o fluxo de leitura."),
-        ("Dashboard", "Mapas empilhados à esquerda; card geral e pilares à direita."),
+        ("Dashboard", "Grid 2×2 de mapas à esquerda; card geral e pilares à direita."),
         ("Ranking", "Tabelas por grupo de posição — clique para abrir no Dashboard."),
         ("Similaridade", "Selecione um atleta e compare com similares da outra liga."),
     ]
