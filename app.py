@@ -343,6 +343,44 @@ st.markdown(
         font-size: 0.72rem;
         color: #64748b;
     }
+    .grade-accordion {
+        background: linear-gradient(160deg, #151b2b 0%, #101522 100%);
+        border: 1px solid #2a3550;
+        border-radius: 10px;
+        margin-bottom: 0.45rem;
+        overflow: hidden;
+    }
+    .grade-accordion summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 0.72rem 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+    }
+    .grade-accordion summary::-webkit-details-marker { display: none; }
+    .grade-arrow {
+        color: #93c5fd;
+        font-size: 0.95rem;
+        line-height: 1;
+        transition: transform 0.18s ease;
+        flex-shrink: 0;
+        width: 0.85rem;
+    }
+    .grade-accordion[open] .grade-arrow { transform: rotate(90deg); }
+    .grade-summary-main { flex: 1; min-width: 0; }
+    .grade-summary-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.65rem;
+    }
+    .grade-accordion-body {
+        padding: 0.15rem 0.85rem 0.8rem;
+        border-top: 1px solid #1f293f;
+    }
+    .grade-accordion-body .metric-line:last-child { border-bottom: none; }
+    .sidebar-stack { display: flex; flex-direction: column; gap: 0.35rem; }
     .cmp-delta {
         display: inline-block;
         font-size: 0.58rem;
@@ -774,12 +812,12 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     return f'<div class="rating-row">{rating_box}{warnings}</div>'
 
 
-def _section_grade_card_html(
+def _section_grade_summary_bits(
     player: dict,
     section_key: str,
     title: str,
     subtitle: str,
-) -> str:
+) -> tuple[str, str]:
     section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
     section_rank_info = player.get("section_rating_ranks") if isinstance(player.get("section_rating_ranks"), dict) else {}
     score = section_ratings.get(section_key)
@@ -802,22 +840,27 @@ def _section_grade_card_html(
             )
         else:
             score_html = f'<span class="section-rating-pill">{html.escape(txt)}</span>'
-    return (
-        '<div class="grade-card">'
-        f'<div class="grade-card-title">{html.escape(title)}</div>'
-        f'<div class="grade-card-sub">{html.escape(subtitle)}</div>'
+    main = (
+        f'<div class="grade-summary-main">'
+        f'<div class="grade-summary-top">'
+        f'<div><div class="grade-card-title">{html.escape(title)}</div>'
+        f'<div class="grade-card-sub">{html.escape(subtitle)}</div></div>'
         f'<div class="grade-card-score">{score_html}</div>'
+        f"</div>"
         f"{rank_html}"
-        "</div>"
+        f"</div>"
     )
+    return main, score_html
 
 
-def _section_metrics_card_html(
+def _section_grade_accordion_html(
     player: dict,
     section_key: str,
     title: str,
+    subtitle: str,
     keys: tuple[str, ...],
 ) -> str:
+    summary_main, _ = _section_grade_summary_bits(player, section_key, title, subtitle)
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
     lines = "".join(
         _metric_line_html(
@@ -831,15 +874,14 @@ def _section_metrics_card_html(
         for key in keys
     )
     return (
-        '<div class="player-card">'
-        f'<div class="stat-section-row"><span class="stat-section">{html.escape(title)}</span></div>'
-        f"{lines}"
-        "</div>"
+        '<details class="grade-accordion">'
+        "<summary>"
+        '<span class="grade-arrow">›</span>'
+        f"{summary_main}"
+        "</summary>"
+        f'<div class="grade-accordion-body">{lines}</div>'
+        "</details>"
     )
-
-
-def _metric_section_state_key(player_id: str) -> str:
-    return f"open_metric_section_{player_id}"
 
 
 def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tuple[str, str]:
@@ -863,30 +905,7 @@ def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tupl
 
 def render_player_layout(player: dict, passes) -> None:
     team_label = player.get("team", "—")
-    player_id = str(player.get("player_id", ""))
-    col_map1, col_map2, col_map3 = st.columns(3, gap="small")
-
-    if passes is None or passes.empty:
-        with col_map1:
-            st.warning("Sem passes para este jogador.")
-    else:
-        with col_map1:
-            st.caption("Passes completos — todos no campo")
-            fig_all = draw_all_completed_passes_map(
-                passes,
-                player["player_name"],
-                team_label,
-                compact=False,
-            )
-            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
-        with col_map2:
-            st.caption("Passes de impacto")
-            fig = draw_impact_pass_map(passes, player["player_name"], team_label, compact=False)
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        with col_map3:
-            st.caption("Destino — heatmap")
-            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
-            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+    col_maps, col_side = st.columns([1.45, 1], gap="medium")
 
     general_sections: list[tuple[str, str | None, tuple[str, ...], bool]] = [
         (
@@ -902,7 +921,6 @@ def render_player_layout(player: dict, passes) -> None:
             False,
         ),
     ]
-
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
     general_card = (
         '<div class="player-card player-info-card">'
@@ -912,37 +930,40 @@ def render_player_layout(player: dict, passes) -> None:
         + _build_sections_html(player, metric_ranks, general_sections)
         + "</div>"
     )
-    st.markdown(general_card, unsafe_allow_html=True)
+    pillar_html = "".join(
+        _section_grade_accordion_html(player, section_key, title, subtitle, keys)
+        for section_key, title, subtitle, keys in SCOUT_SECTION_SPECS
+    )
+    sidebar_html = (
+        '<div class="sidebar-stack">'
+        f"{general_card}"
+        f"{pillar_html}"
+        "</div>"
+    )
 
-    st.markdown("##### Pilares de avaliação")
-    grade_cols = st.columns(len(SCOUT_SECTION_SPECS), gap="small")
-    open_section = st.session_state.get(_metric_section_state_key(player_id))
-    for col, (section_key, title, subtitle, _keys) in zip(grade_cols, SCOUT_SECTION_SPECS):
-        with col:
-            st.markdown(
-                _section_grade_card_html(player, section_key, title, subtitle),
-                unsafe_allow_html=True,
+    with col_maps:
+        if passes is None or passes.empty:
+            st.warning("Sem passes para este jogador.")
+        else:
+            st.caption("Passes completos — todos no campo")
+            fig_all = draw_all_completed_passes_map(
+                passes,
+                player["player_name"],
+                team_label,
+                compact=False,
             )
-            if st.button(
-                "Ver métricas" if open_section != section_key else "Selecionado",
-                key=f"grade_btn_{player_id}_{section_key}",
-                use_container_width=True,
-            ):
-                st.session_state[_metric_section_state_key(player_id)] = section_key
+            st.pyplot(fig_all, clear_figure=True, use_container_width=True)
 
-    if open_section:
-        spec_by_key = {item[0]: item for item in SCOUT_SECTION_SPECS}
-        if open_section in spec_by_key:
-            _section_key, title, _subtitle, keys = spec_by_key[open_section]
-            c_close, _ = st.columns([1, 5])
-            with c_close:
-                if st.button("Fechar", key=f"grade_close_{player_id}"):
-                    st.session_state.pop(_metric_section_state_key(player_id), None)
-                    st.rerun()
-            st.markdown(
-                _section_metrics_card_html(player, _section_key, title, keys),
-                unsafe_allow_html=True,
-            )
+            st.caption("Passes de impacto")
+            fig = draw_impact_pass_map(passes, player["player_name"], team_label, compact=False)
+            st.pyplot(fig, clear_figure=True, use_container_width=True)
+
+            st.caption("Destino — heatmap")
+            fig_heat = draw_pass_destination_heatmap(passes, player["player_name"], team_label, compact=False)
+            st.pyplot(fig_heat, clear_figure=True, use_container_width=True)
+
+    with col_side:
+        st.markdown(sidebar_html, unsafe_allow_html=True)
 
 
 def render_map_section(
@@ -951,8 +972,8 @@ def render_map_section(
     pool_by_position: dict[str, list[dict]],
     passes_by_player: dict,
 ) -> None:
-    st.subheader("Mapa — passes de impacto")
-    st.caption("Clique em um jogador na tabela de rating ou selecione abaixo.")
+    st.subheader("Análise do jogador")
+    st.caption("Selecione abaixo ou clique em um jogador na aba Ranking.")
 
     options = _player_options(all_players)
     if not options:
@@ -973,7 +994,7 @@ def render_map_section(
     )
 
     if not selected_label:
-        st.info("Selecione um jogador na lista ou clique em uma linha da tabela de rating.")
+        st.info("Selecione um jogador na lista ou na aba Ranking.")
         return
 
     player_id = id_by_label[selected_label]
@@ -1204,8 +1225,9 @@ def render_presentation_tab(
     )
     st.markdown(
         '<div class="pres-card"><h4>Cards com nota por pilar</h4>'
-        f"<p>Cada pilar tem nota 0–10 e rank no grupo. Clique em <em>Ver métricas</em> "
-        f"para abrir o detalhe:</p><ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
+        "<p>À direita dos mapas: card geral no topo e pilares abaixo. "
+        "Clique na <strong>seta</strong> de cada pilar para ver as métricas.</p>"
+        f"<ul style='margin:0.5rem 0 0 1rem;color:#94a3b8;"
         f"font-size:0.88rem;line-height:1.5'>{pillar_lines}</ul></div>",
         unsafe_allow_html=True,
     )
@@ -1237,7 +1259,8 @@ def render_presentation_tab(
     st.markdown("#### Como usar")
     steps = [
         ("Apresentação", "Entenda mapas, pilares e o fluxo de leitura."),
-        ("Dashboard", "Escolha o jogador; abra os pilares que quiser detalhar."),
+        ("Dashboard", "Mapas empilhados à esquerda; card geral e pilares à direita."),
+        ("Ranking", "Tabelas por grupo de posição — clique para abrir no Dashboard."),
         ("Similaridade", "Selecione um atleta e compare com similares da outra liga."),
     ]
     for idx, (title, text) in enumerate(steps, start=1):
@@ -1690,14 +1713,14 @@ def main() -> None:
     rated, players_by_id, pool_by_position = compute_pass_ratings(all_players)
     selected_player_id = st.session_state.get("map_player_id")
 
-    tab_pres, tab_dashboard, tab_sim_ba, tab_sim_ab = st.tabs(
-        ["Apresentação", "Dashboard", "Similaridade B->A", "Similaridade A->B"]
+    tab_pres, tab_dashboard, tab_ranking, tab_sim_ba, tab_sim_ab = st.tabs(
+        ["Apresentação", "Dashboard", "Ranking", "Similaridade B->A", "Similaridade A->B"]
     )
     with tab_pres:
         render_presentation_tab(all_players, passes_by_player)
     with tab_dashboard:
         render_map_section(all_players, players_by_id, pool_by_position, passes_by_player)
-        st.divider()
+    with tab_ranking:
         render_rating_section(rated, selected_player_id=selected_player_id)
     with tab_sim_ba:
         render_similarity_section(
