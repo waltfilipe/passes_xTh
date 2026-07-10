@@ -117,7 +117,7 @@ def _rating_sample_warning_html(player: dict, *, soft: bool = False) -> str:
         return ""
     tip = html.escape(_low_sample_tooltip(player))
     if soft:
-        icon = '<span class="rating-warning rating-warning-soft">?</span>'
+        icon = '<span class="rating-warning rating-warning-soft">⚠</span>'
     else:
         icon = '<span class="rating-warning">⚠</span>'
     return (
@@ -168,6 +168,81 @@ def _rating_badges_html(player: dict) -> str:
     if not badges:
         return ""
     return f'<span class="rating-badge-row">{"".join(badges)}</span>'
+
+_PILLAR_RADAR_LABELS: dict[str, str] = {
+    "metrics_absolute": "Prod.",
+    "metrics_relative": "Efic.",
+    "long_balls": "Vertical",
+    "construction": "Constr.",
+    "aggression": "Penetr.",
+}
+
+
+def _pillar_radar_b64(player: dict) -> str:
+    import base64
+    import io
+
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    section_ratings = player.get("section_ratings") if isinstance(player.get("section_ratings"), dict) else {}
+    labels: list[str] = []
+    values: list[float] = []
+    for section_key, _, _, _ in SCOUT_SECTION_SPECS:
+        score = section_ratings.get(section_key)
+        if score is None:
+            continue
+        labels.append(_PILLAR_RADAR_LABELS.get(section_key, section_key[:6]))
+        values.append(float(score) * 10.0)
+    if len(values) < 3:
+        return ""
+
+    count = len(values)
+    angles = np.linspace(0, 2 * np.pi, count, endpoint=False)
+    values_closed = values + [values[0]]
+    angles_closed = np.append(angles, angles[0])
+    low_sample = _is_low_sample_rating(player)
+    line_alpha = 0.55 if low_sample else 0.95
+    fill_alpha = 0.12 if low_sample else 0.22
+
+    fig, ax = plt.subplots(
+        figsize=(1.15, 1.15),
+        subplot_kw={"polar": True},
+        facecolor="none",
+    )
+    fig.patch.set_alpha(0.0)
+    ax.set_facecolor("none")
+    ax.plot(angles_closed, values_closed, color="#60a5fa", linewidth=1.4, alpha=line_alpha)
+    ax.fill(angles_closed, values_closed, color="#60a5fa", alpha=fill_alpha)
+    ax.set_ylim(4.0, 8.0)
+    ax.set_yticks([5, 6, 7])
+    ax.set_yticklabels([])
+    ax.set_xticks(angles)
+    ax.set_xticklabels(labels, fontsize=5.2, color="#94a3b8")
+    ax.tick_params(axis="x", pad=2)
+    ax.grid(color="#334155", alpha=0.45, linewidth=0.55)
+    ax.spines["polar"].set_color("#334155")
+    ax.spines["polar"].set_alpha(0.55)
+    fig.tight_layout(pad=0.15)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120, transparent=True, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _pillar_radar_html(player: dict) -> str:
+    b64 = _pillar_radar_b64(player)
+    if not b64:
+        return ""
+    return (
+        '<span class="rating-radar-wrap" title="Notas dos 5 pilares">'
+        f'<img class="rating-radar" src="data:image/png;base64,{b64}" alt="Radar dos pilares">'
+        "</span>"
+    )
 
 APP_NAME = "Scout de Passes"
 APP_LEAGUE = "Série B"
@@ -231,10 +306,33 @@ st.markdown(
         gap: 0.35rem;
     }
     .rating-warning-soft {
-        font-size: 0.78rem;
-        font-weight: 600;
-        color: #64748b;
-        opacity: 0.72;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #d4a017;
+        opacity: 0.82;
+        filter: none;
+    }
+    .rating-head-cluster {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        min-width: 0;
+    }
+    .rating-radar-wrap {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 82px;
+        height: 82px;
+        margin-left: auto;
+    }
+    .rating-radar {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
     }
     .rating-cell-wrap {
         display: inline-flex;
@@ -930,7 +1028,7 @@ st.markdown(
 
 st.title(f"{APP_NAME} · {APP_LEAGUE}")
 
-RATING_COLUMNS = ["Jogador", "Time", "Nota", ""]
+RATING_COLUMNS = ["Jogador", "Time", "Nota"]
 SELECTBOX_KEY = "map_player_select"
 
 
@@ -1108,14 +1206,12 @@ def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None)
     for row in rows:
         pid = html.escape(str(row["player_id"]))
         rating_txt = _rating_score_html(row, soft_warning=True)
-        badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
         body.append(
             f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
             f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
-            f'<td class="badges">{badges}</td>'
             "</tr>"
         )
     return (
@@ -1147,18 +1243,12 @@ _RANKING_EMBED_CSS = """
 .rating{font-weight:700;color:#dbeafe;text-align:right;white-space:nowrap}
 .rating-cell-wrap{display:inline-flex;align-items:center;justify-content:flex-end;gap:0.2rem;white-space:nowrap}
 .rating-warning{font-size:1rem;line-height:1;cursor:help;color:#fbbf24}
-.rating-warning-soft{font-size:0.78rem;font-weight:600;color:#64748b;opacity:0.72}
+.rating-warning-soft{font-size:0.68rem;font-weight:700;color:#d4a017;opacity:0.82}
 .rating-warning-tip{position:relative;display:inline-flex;align-items:center}
 .rating-sample-tipbox{display:none;position:absolute;z-index:111;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
   background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.72rem;font-weight:500;
   color:#e2e8f0;white-space:normal;max-width:220px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.4);pointer-events:none}
 .rating-sample-tip:hover .rating-sample-tipbox{display:block}
-.rating-badge-tip{position:relative;display:inline-flex;align-items:center;cursor:help}
-.rating-achievement-dot{display:inline-block;width:10px;height:10px;border-radius:999px;border:1px solid rgba(255,255,255,0.28)}
-.rating-achievement-dot.pareto{background:#38bdf8}
-.rating-achievement-dot.archetype{background:#a78bfa}
-.rating-badge-tip:hover .rating-tipbox{display:block}
-.badges{text-align:right;white-space:nowrap}
 """
 
 
@@ -1280,14 +1370,12 @@ def render_rating_table(
     for row in rows:
         pid = html.escape(str(row["player_id"]))
         rating_txt = _rating_score_html(row, soft_warning=True)
-        badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
         body.append(
             f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
             f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
-            f'<td class="badges">{badges}</td>'
             "</tr>"
         )
 
@@ -1521,8 +1609,13 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
         )
 
     meta = f'<div class="rating-meta">{badges}</div>' if badges else ""
+    radar = _pillar_radar_html(player)
     warnings = _rating_warnings_html(player)
-    return f'<div class="rating-row">{rating_box}{meta}{warnings}</div>'
+    return (
+        f'<div class="rating-row">'
+        f'<div class="rating-head-cluster">{rating_box}{meta}</div>'
+        f"{radar}{warnings}</div>"
+    )
 
 
 def _section_grade_summary_bits(
