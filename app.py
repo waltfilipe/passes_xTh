@@ -170,11 +170,11 @@ def _rating_badges_html(player: dict) -> str:
     return f'<span class="rating-badge-row">{"".join(badges)}</span>'
 
 _PILLAR_RADAR_LABELS: dict[str, str] = {
-    "metrics_absolute": "Prod.",
-    "metrics_relative": "Efic.",
-    "long_balls": "Vertical",
-    "construction": "Constr.",
-    "aggression": "Penetr.",
+    "metrics_absolute": "P90",
+    "metrics_relative": "Eff",
+    "long_balls": "Vrt",
+    "construction": "Cst",
+    "aggression": "Atq",
 }
 
 
@@ -209,27 +209,29 @@ def _pillar_radar_b64(player: dict) -> str:
     fill_alpha = 0.12 if low_sample else 0.22
 
     fig, ax = plt.subplots(
-        figsize=(1.15, 1.15),
+        figsize=(2.35, 2.35),
         subplot_kw={"polar": True},
         facecolor="none",
     )
     fig.patch.set_alpha(0.0)
     ax.set_facecolor("none")
-    ax.plot(angles_closed, values_closed, color="#60a5fa", linewidth=1.4, alpha=line_alpha)
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.plot(angles_closed, values_closed, color="#60a5fa", linewidth=2.0, alpha=line_alpha)
     ax.fill(angles_closed, values_closed, color="#60a5fa", alpha=fill_alpha)
     ax.set_ylim(4.0, 8.0)
     ax.set_yticks([5, 6, 7])
     ax.set_yticklabels([])
     ax.set_xticks(angles)
-    ax.set_xticklabels(labels, fontsize=5.2, color="#94a3b8")
-    ax.tick_params(axis="x", pad=2)
-    ax.grid(color="#334155", alpha=0.45, linewidth=0.55)
+    ax.set_xticklabels(labels, fontsize=7.5, color="#cbd5e1", fontweight=600)
+    ax.tick_params(axis="x", pad=7)
+    ax.grid(color="#334155", alpha=0.5, linewidth=0.65)
     ax.spines["polar"].set_color("#334155")
     ax.spines["polar"].set_alpha(0.55)
-    fig.tight_layout(pad=0.15)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, transparent=True, bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(buf, format="png", dpi=150, transparent=True, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
@@ -283,10 +285,10 @@ st.markdown(
         margin-top: 0.1rem;
     }
     .rating-row {
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         align-items: center;
-        flex-wrap: wrap;
-        gap: 0.55rem;
+        gap: 0.65rem;
         margin-bottom: 0;
     }
     .rating-meta {
@@ -324,9 +326,8 @@ st.markdown(
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 82px;
-        height: 82px;
-        margin-left: auto;
+        width: 148px;
+        height: 148px;
     }
     .rating-radar {
         width: 100%;
@@ -1613,8 +1614,8 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     warnings = _rating_warnings_html(player)
     return (
         f'<div class="rating-row">'
-        f'<div class="rating-head-cluster">{rating_box}{meta}</div>'
-        f"{radar}{warnings}</div>"
+        f'<div class="rating-head-cluster">{rating_box}{meta}{warnings}</div>'
+        f"{radar}</div>"
     )
 
 
