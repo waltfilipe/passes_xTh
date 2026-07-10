@@ -99,9 +99,8 @@ def _rating_confidence_value(player: dict) -> float:
         return float(conf)
     minutes = float(player.get("minutes") or 0)
     passes = float(player.get("passes_completed") or 0)
-    min_ref = max(float(player.get("position_p25_minutes") or RATING_CONFIDENCE_MINUTES), 1.0)
     pass_ref = max(float(player.get("position_p25_passes") or RATING_CONFIDENCE_PASSES), 1.0)
-    return min(1.0, minutes / min_ref) * min(1.0, passes / pass_ref)
+    return min(1.0, minutes / RATING_CONFIDENCE_MINUTES) * min(1.0, passes / pass_ref)
 
 
 def _is_low_sample_rating(player: dict) -> bool:
@@ -270,7 +269,41 @@ st.markdown(
         justify-content: stretch;
         margin-top: 0.75rem;
     }
-    .player-info-card .rating-row { margin-top: 0.75rem; }
+    .player-info-card h3 { margin: 0 0 0.2rem 0; color: #f1f5f9; font-size: 1.15rem; }
+    .player-info-card .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 0; }
+    .player-meta-rating-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-top: 0.1rem;
+    }
+    .player-sub-line {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        color: #94a3b8;
+        font-size: 0.85rem;
+        min-width: 0;
+    }
+    .player-rating-slot {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 0.35rem;
+        flex-shrink: 0;
+    }
+    .player-radar-center {
+        display: flex;
+        justify-content: center;
+        margin: 0.7rem 0 0.85rem;
+    }
+    .player-radar-center .rating-radar-wrap {
+        width: 168px;
+        height: 168px;
+    }
     .player-info-card .header-stat strong { font-size: 0.98rem; }
     .header-stat {
         font-size: 0.84rem;
@@ -313,13 +346,6 @@ st.markdown(
         color: #d4a017;
         opacity: 0.82;
         filter: none;
-    }
-    .rating-head-cluster {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 0.55rem;
-        min-width: 0;
     }
     .rating-radar-wrap {
         flex-shrink: 0;
@@ -1577,7 +1603,7 @@ def _build_sections_html(
     return "".join(parts)
 
 
-def _rating_header_html(player: dict, metric_ranks: dict) -> str:
+def _player_rating_slot_html(player: dict, metric_ranks: dict) -> str:
     rating_val = player.get("pass_rating")
     rating_info = metric_ranks.get("pass_rating")
     badges = _rating_badges_html(player)
@@ -1609,14 +1635,15 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
             f"</span>"
         )
 
-    meta = f'<div class="rating-meta">{badges}</div>' if badges else ""
+    badges_html = f'<div class="rating-meta">{badges}</div>' if badges else ""
+    return f'<div class="player-rating-slot">{rating_box}{badges_html}</div>'
+
+
+def _player_radar_row_html(player: dict) -> str:
     radar = _pillar_radar_html(player)
-    warnings = _rating_warnings_html(player)
-    return (
-        f'<div class="rating-row">'
-        f'<div class="rating-head-cluster">{rating_box}{meta}{warnings}</div>'
-        f"{radar}</div>"
-    )
+    if not radar:
+        return ""
+    return f'<div class="player-radar-center">{radar}</div>'
 
 
 def _section_grade_summary_bits(
@@ -1694,11 +1721,19 @@ def _build_dashboard_sidebar_html(player: dict) -> str:
         ),
     ]
     metric_ranks = player.get("metric_ranks") if isinstance(player.get("metric_ranks"), dict) else {}
+    sub_line = (
+        f"{html.escape(player.get('team', '—'))} · "
+        f"{html.escape(str(player.get('position', '—')))}"
+        f"{_rating_warnings_html(player)}"
+    )
     general_card = (
         '<div class="player-card player-info-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
-        f'<div class="sub">{html.escape(player.get("team", "—"))} · {html.escape(str(player.get("position", "—")))}</div>'
-        f"{_rating_header_html(player, metric_ranks)}"
+        '<div class="player-meta-rating-row">'
+        f'<div class="player-sub-line">{sub_line}</div>'
+        f"{_player_rating_slot_html(player, metric_ranks)}"
+        "</div>"
+        f"{_player_radar_row_html(player)}"
         + _build_sections_html(player, metric_ranks, general_sections)
         + "</div>"
     )
