@@ -51,7 +51,7 @@ SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 SEASON_ALL_BR_FULL_CSV_PATH = Path(__file__).resolve().parent / "season_all_brfull.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 44
+DATA_CACHE_VERSION = 45
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -1453,23 +1453,70 @@ def _metric_ranks_for_pool(
     return out
 
 
+def _section_metric_z_matrix(
+    pool: list[dict],
+    shrunk_values: dict[str, dict[str, float]],
+    keys: tuple[str, ...],
+) -> tuple[np.ndarray, list[str]]:
+    pids = [str(p["player_id"]) for p in pool]
+    mat = np.array(
+        [[shrunk_values[pid][key] for key in keys] for pid in pids],
+        dtype=float,
+    )
+    return _zscore_columns(mat), pids
+
+
+def _section_hybrid_rating_for_player(
+    player: dict,
+    pool: list[dict],
+    shrunk_values: dict[str, dict[str, float]],
+    keys: tuple[str, ...],
+) -> float:
+    if not keys:
+        confidence = _rating_confidence(player)
+        adjusted, _ = _apply_rating_confidence(RATING_DISPLAY_MID, confidence)
+        return round(adjusted / 10.0, 4)
+    if not pool:
+        confidence = _rating_confidence(player)
+        adjusted, _ = _apply_rating_confidence(RATING_DISPLAY_MID, confidence)
+        return round(adjusted / 10.0, 4)
+
+    mat = np.array(
+        [[shrunk_values[str(p["player_id"])][key] for key in keys] for p in pool],
+        dtype=float,
+    )
+    mu = mat.mean(axis=0)
+    sd = mat.std(axis=0, ddof=0)
+    sd = np.where(sd <= 1e-12, 1.0, sd)
+
+    pid = str(player["player_id"])
+    row = np.array([shrunk_values[pid][key] for key in keys], dtype=float)
+    composite_z = float(((row - mu) / sd).mean())
+    raw_display = _tanh_display_score(composite_z)
+    confidence = _rating_confidence(player)
+    adjusted, _ = _apply_rating_confidence(raw_display, confidence)
+    return round(adjusted / 10.0, 4)
+
+
 def _section_ratings_for_pool(
     pos_players: list[dict],
     pool_size: int,
     shrunk_values: dict[str, dict[str, float]],
 ) -> dict[str, dict[str, float]]:
+    _ = pool_size
     out: dict[str, dict[str, float]] = {}
     for section_key, keys in SECTION_RATING_GROUPS.items():
-        scores: dict[str, list[float]] = {p["player_id"]: [] for p in pos_players}
-        for key in keys:
-            for player in pos_players:
-                scores[player["player_id"]].append(
-                    _metric_rating_score(pos_players, shrunk_values, player, key, pool_size)
-                )
-        out[section_key] = {
-            pid: round(sum(vals) / len(vals), 4) if vals else 0.0
-            for pid, vals in scores.items()
-        }
+        if not pos_players or not keys:
+            out[section_key] = {}
+            continue
+        z_mat, pids = _section_metric_z_matrix(pos_players, shrunk_values, keys)
+        composite_z = z_mat.mean(axis=1)
+        out[section_key] = {}
+        for i, player in enumerate(pos_players):
+            raw_display = _tanh_display_score(float(composite_z[i]))
+            confidence = _rating_confidence(player)
+            adjusted, _ = _apply_rating_confidence(raw_display, confidence)
+            out[section_key][pids[i]] = round(adjusted / 10.0, 4)
     return out
 
 
@@ -1578,17 +1625,17 @@ def rate_player_vs_eligible_pool(player: dict, eligible_pool: list[dict]) -> dic
 
     section_ratings: dict[str, float] = {}
     section_rating_ranks: dict[str, dict] = {}
+    pool_section_scores = _section_ratings_for_pool(eligible_pool, pool_size, shrunk_values)
     for section_key, keys in SECTION_RATING_GROUPS.items():
-        section_scores = [
-            _metric_rating_score(eligible_pool, merged_shrunk, player_for_rating, key, pool_size)
-            for key in keys
-        ]
-        section_value = round(sum(section_scores) / len(section_scores), 4) if section_scores else RATING_SCORE_MID
-        section_ratings[section_key] = section_value
-        section_rank = 1 + sum(
-            1 for peer in eligible_pool
-            if (peer.get("section_ratings") or {}).get(section_key, 0) > section_value
+        section_value = _section_hybrid_rating_for_player(
+            player_for_rating,
+            eligible_pool,
+            merged_shrunk,
+            keys,
         )
+        section_ratings[section_key] = section_value
+        peer_scores = pool_section_scores.get(section_key, {})
+        section_rank = 1 + sum(1 for peer_score in peer_scores.values() if peer_score > section_value)
         section_rating_ranks[section_key] = {
             "rank": section_rank,
             "total": pool_size,
@@ -1627,12 +1674,12 @@ def _rate_single_player(player: dict) -> dict[str, object]:
     pass_rating = round(adjusted / 10.0, 4)
     section_ratings: dict[str, float] = {}
     section_rating_ranks: dict[str, dict] = {}
-    for section_key, keys in SECTION_RATING_GROUPS.items():
-        section_ratings[section_key] = RATING_SCORE_MID
+    for section_key in SECTION_RATING_GROUPS:
+        section_ratings[section_key] = pass_rating
         section_rating_ranks[section_key] = {
             "rank": 1,
             "total": 1,
-            "value": RATING_SCORE_MID,
+            "value": pass_rating,
         }
     metric_ranks["pass_rating"] = {
         "rank": 1,
