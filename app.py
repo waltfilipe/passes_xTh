@@ -99,7 +99,9 @@ def _rating_confidence_value(player: dict) -> float:
         return float(conf)
     minutes = float(player.get("minutes") or 0)
     passes = float(player.get("passes_completed") or 0)
-    return min(1.0, minutes / RATING_CONFIDENCE_MINUTES) * min(1.0, passes / RATING_CONFIDENCE_PASSES)
+    min_ref = max(float(player.get("position_p25_minutes") or RATING_CONFIDENCE_MINUTES), 1.0)
+    pass_ref = max(float(player.get("position_p25_passes") or RATING_CONFIDENCE_PASSES), 1.0)
+    return min(1.0, minutes / min_ref) * min(1.0, passes / pass_ref)
 
 
 def _is_low_sample_rating(player: dict) -> bool:
@@ -107,9 +109,7 @@ def _is_low_sample_rating(player: dict) -> bool:
 
 
 def _low_sample_tooltip(player: dict) -> str:
-    minutes = int(round(float(player.get("minutes") or 0)))
-    passes = int(round(float(player.get("passes_completed") or 0)))
-    return f"Jogou {minutes} min e {passes} passes. Nota ajustada para amostra pequena."
+    return "Amostra pequena no grupo."
 
 
 def _rating_sample_warning_html(player: dict, *, soft: bool = False) -> str:

@@ -51,7 +51,7 @@ SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 SEASON_ALL_BR_FULL_CSV_PATH = Path(__file__).resolve().parent / "season_all_brfull.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 45
+DATA_CACHE_VERSION = 46
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -1276,10 +1276,42 @@ def _tanh_display_score(z_composto: float) -> float:
     )
 
 
+def _position_confidence_thresholds(by_group: dict[str, list[dict]]) -> dict[str, dict[str, float]]:
+    """P25 de minutos e passes entre elegíveis do grupo — referência de amostra sólida."""
+    out: dict[str, dict[str, float]] = {}
+    for group, group_players in by_group.items():
+        if not group_players:
+            continue
+        minutes = [float(p.get("minutes") or 0) for p in group_players]
+        passes = [float(p.get("passes_completed") or 0) for p in group_players]
+        p25_minutes = float(np.percentile(minutes, 25)) if minutes else RATING_CONFIDENCE_MINUTES
+        p25_passes = float(np.percentile(passes, 25)) if passes else RATING_CONFIDENCE_PASSES
+        out[group] = {
+            "position_p25_minutes": max(p25_minutes, 1.0),
+            "position_p25_passes": max(p25_passes, 1.0),
+        }
+    return out
+
+
+def _with_position_confidence_thresholds(
+    player: dict,
+    thresholds_by_group: dict[str, dict[str, float]],
+) -> dict:
+    group = str(player.get("position_group") or "—")
+    th = thresholds_by_group.get(group, {})
+    return {
+        **player,
+        "position_p25_minutes": round(float(th.get("position_p25_minutes", RATING_CONFIDENCE_MINUTES)), 1),
+        "position_p25_passes": round(float(th.get("position_p25_passes", RATING_CONFIDENCE_PASSES)), 1),
+    }
+
+
 def _rating_confidence(player: dict) -> float:
     minutes = float(player.get("minutes") or 0)
     passes = float(player.get("passes_completed") or 0)
-    return min(1.0, minutes / RATING_CONFIDENCE_MINUTES) * min(1.0, passes / RATING_CONFIDENCE_PASSES)
+    min_ref = max(float(player.get("position_p25_minutes") or RATING_CONFIDENCE_MINUTES), 1.0)
+    pass_ref = max(float(player.get("position_p25_passes") or RATING_CONFIDENCE_PASSES), 1.0)
+    return min(1.0, minutes / min_ref) * min(1.0, passes / pass_ref)
 
 
 def _apply_rating_confidence(raw_display: float, confidence: float) -> tuple[float, float]:
@@ -1595,6 +1627,9 @@ def rate_player_vs_eligible_pool(player: dict, eligible_pool: list[dict]) -> dic
         return {**player, **compared}
 
     pool_size = len(eligible_pool)
+    group = str(player.get("position_group") or "—")
+    conf_thresholds = _position_confidence_thresholds({group: eligible_pool})
+    player = _with_position_confidence_thresholds(player, conf_thresholds)
     shrunk_values = _build_shrunk_metric_values(eligible_pool, tuple(RANK_DISPLAY_KEYS))
 
     def rank_for_key(key: str) -> dict:
@@ -1746,6 +1781,14 @@ def compute_pass_ratings(players: list[dict]) -> tuple[list[dict], dict[str, dic
     pool_players = [p for p in enriched if p.get("eligible_for_rating")]
 
     by_group: dict[str, list[dict]] = {}
+    for player in pool_players:
+        by_group.setdefault(str(player.get("position_group") or "—"), []).append(player)
+
+    conf_thresholds = _position_confidence_thresholds(by_group)
+    enriched = [_with_position_confidence_thresholds(p, conf_thresholds) for p in enriched]
+    pool_players = [p for p in enriched if p.get("eligible_for_rating")]
+
+    by_group = {}
     for player in pool_players:
         by_group.setdefault(str(player.get("position_group") or "—"), []).append(player)
 
