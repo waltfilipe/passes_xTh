@@ -51,7 +51,7 @@ SEASON_ALL_CSV_PATH = Path(__file__).resolve().parent / "season_all_serieb.csv"
 SEASON_ALL_BR_CSV_PATH = Path(__file__).resolve().parent / "season_all_br.csv"
 SEASON_ALL_BR_FULL_CSV_PATH = Path(__file__).resolve().parent / "season_all_brfull.csv"
 PLAYER_MATCH_STATS_PATH = Path(__file__).resolve().parent / "player_match_stats.csv"
-DATA_CACHE_VERSION = 43
+DATA_CACHE_VERSION = 44
 
 MIN_MINUTES_PCT = 0.30
 RATING_MIN_MINUTES_PCT = 0.30
@@ -61,6 +61,13 @@ RATING_VOLUME_WEIGHT = 0.40
 RATING_EFFICIENCY_WEIGHT = 0.60
 RATING_RANK_BLEND = 0.85
 RATING_PERCENTILE_BLEND = 0.15
+RATING_TANH_SCALE = 1.2
+RATING_TANH_AMPLITUDE = 1.8
+RATING_DISPLAY_MID = 6.0
+RATING_CONFIDENCE_MINUTES = 900.0
+RATING_CONFIDENCE_PASSES = 400.0
+RATING_ARCHETYPE_TOP_N = 5
+RATING_PARETO_MIN_DIMENSIONS = 2
 SHRINKAGE_PASS_K = 150
 SHRINKAGE_MINUTES_K = 450
 RANKING_TOP_N = 20
@@ -1221,17 +1228,203 @@ def _dimension_rating_score(
     return RATING_VOLUME_WEIGHT * volume_score + RATING_EFFICIENCY_WEIGHT * efficiency_score
 
 
-def _pass_rating_from_dimensions(
+def _zscore_columns(mat: np.ndarray) -> np.ndarray:
+    mu = mat.mean(axis=0)
+    sd = mat.std(axis=0, ddof=0)
+    sd = np.where(sd <= 1e-12, 1.0, sd)
+    return (mat - mu) / sd
+
+
+def _metric_z_vector(
+    shrunk_row: np.ndarray,
+    *,
+    mu: np.ndarray,
+    sd: np.ndarray,
+) -> np.ndarray:
+    return (shrunk_row - mu) / sd
+
+
+def _shrunk_metric_matrix(
     pool: list[dict],
     shrunk_values: dict[str, dict[str, float]],
+) -> tuple[np.ndarray, list[str]]:
+    pids = [str(p["player_id"]) for p in pool]
+    mat = np.array(
+        [[shrunk_values[pid][key] for key in RATING_METRIC_KEYS] for pid in pids],
+        dtype=float,
+    )
+    return mat, pids
+
+
+def _dimension_z_matrix(metric_z: np.ndarray) -> np.ndarray:
+    key_idx = {key: i for i, key in enumerate(RATING_METRIC_KEYS)}
+    dim_cols: list[np.ndarray] = []
+    for _, volume_key, efficiency_key in RATING_DIMENSIONS:
+        if volume_key is None:
+            dim_cols.append(metric_z[:, key_idx[efficiency_key]])
+        else:
+            dim_cols.append(
+                RATING_VOLUME_WEIGHT * metric_z[:, key_idx[volume_key]]
+                + RATING_EFFICIENCY_WEIGHT * metric_z[:, key_idx[efficiency_key]]
+            )
+    return np.stack(dim_cols, axis=1)
+
+
+def _tanh_display_score(z_composto: float) -> float:
+    return float(
+        RATING_DISPLAY_MID + RATING_TANH_AMPLITUDE * np.tanh(float(z_composto) / RATING_TANH_SCALE)
+    )
+
+
+def _rating_confidence(player: dict) -> float:
+    minutes = float(player.get("minutes") or 0)
+    passes = float(player.get("passes_completed") or 0)
+    return min(1.0, minutes / RATING_CONFIDENCE_MINUTES) * min(1.0, passes / RATING_CONFIDENCE_PASSES)
+
+
+def _apply_rating_confidence(raw_display: float, confidence: float) -> tuple[float, float]:
+    adjusted = confidence * raw_display + (1.0 - confidence) * RATING_DISPLAY_MID
+    uncertainty = (1.0 - confidence) * RATING_TANH_AMPLITUDE
+    return float(adjusted), float(uncertainty)
+
+
+def _value_percentile_in_pool(value: float, pool_values: list[float]) -> float:
+    clean = [float(v) for v in pool_values]
+    if not clean:
+        return 0.5
+    return float(sum(1 for v in clean if v < value) + 0.5 * sum(1 for v in clean if v == value)) / len(clean)
+
+
+def _pareto_top_quartile_counts(dim_z: np.ndarray) -> np.ndarray:
+    if dim_z.size == 0:
+        return np.zeros(0, dtype=int)
+    q75 = np.percentile(dim_z, 75, axis=0)
+    return (dim_z >= q75).sum(axis=1).astype(int)
+
+
+def _archetype_distances(metric_z: np.ndarray) -> np.ndarray:
+    if metric_z.size == 0:
+        return np.zeros(0, dtype=float)
+    ideal = np.percentile(metric_z, 90, axis=0)
+    return np.linalg.norm(metric_z - ideal, axis=1)
+
+
+def _hybrid_rating_fields_for_pool(
+    pool: list[dict],
+    shrunk_values: dict[str, dict[str, float]],
+) -> dict[str, dict[str, object]]:
+    if not pool:
+        return {}
+
+    mat, pids = _shrunk_metric_matrix(pool, shrunk_values)
+    metric_z = _zscore_columns(mat)
+    dim_z = _dimension_z_matrix(metric_z)
+    composite_z = dim_z.mean(axis=1)
+    raw_displays = np.array([_tanh_display_score(z) for z in composite_z], dtype=float)
+    pareto_counts = _pareto_top_quartile_counts(dim_z)
+    archetype_dist = _archetype_distances(metric_z)
+    archetype_order = np.argsort(archetype_dist)
+    archetype_rank_by_pid = {
+        pids[idx]: int(rank)
+        for rank, idx in enumerate(archetype_order, start=1)
+    }
+
+    adjusted_displays: list[float] = []
+    fields_by_pid: dict[str, dict[str, object]] = {}
+    for i, player in enumerate(pool):
+        pid = pids[i]
+        confidence = _rating_confidence(player)
+        raw_display = float(raw_displays[i])
+        adjusted, uncertainty = _apply_rating_confidence(raw_display, confidence)
+        adjusted_displays.append(adjusted)
+        fields_by_pid[pid] = {
+            "rating_raw_display": round(raw_display, 2),
+            "rating_confidence": round(confidence, 4),
+            "rating_uncertainty": round(uncertainty, 2),
+            "rating_pareto_dims": int(pareto_counts[i]),
+            "rating_pareto_badge": int(pareto_counts[i]) >= RATING_PARETO_MIN_DIMENSIONS,
+            "rating_archetype_rank": archetype_rank_by_pid[pid],
+            "rating_archetype_badge": archetype_rank_by_pid[pid] <= RATING_ARCHETYPE_TOP_N,
+            "rating_composite_z": round(float(composite_z[i]), 4),
+        }
+
+    for i, pid in enumerate(pids):
+        percentile = _value_percentile_in_pool(adjusted_displays[i], adjusted_displays)
+        fields_by_pid[pid]["rating_percentile"] = round(percentile, 4)
+        fields_by_pid[pid]["pass_rating"] = round(adjusted_displays[i] / 10.0, 4)
+
+    return fields_by_pid
+
+
+def _hybrid_rating_fields_for_player(
     player: dict,
-    pool_size: int,
-) -> float:
-    scores = [
-        _dimension_rating_score(pool, shrunk_values, player, volume_key, efficiency_key, pool_size)
-        for _, volume_key, efficiency_key in RATING_DIMENSIONS
+    pool: list[dict],
+    shrunk_values: dict[str, dict[str, float]],
+) -> dict[str, object]:
+    if not pool:
+        confidence = _rating_confidence(player)
+        adjusted, uncertainty = _apply_rating_confidence(RATING_DISPLAY_MID, confidence)
+        return {
+            "pass_rating": round(adjusted / 10.0, 4),
+            "rating_raw_display": RATING_DISPLAY_MID,
+            "rating_percentile": 0.5,
+            "rating_confidence": round(confidence, 4),
+            "rating_uncertainty": round(uncertainty, 2),
+            "rating_pareto_dims": 0,
+            "rating_pareto_badge": False,
+            "rating_archetype_rank": None,
+            "rating_archetype_badge": False,
+            "rating_composite_z": 0.0,
+        }
+
+    mat, pids = _shrunk_metric_matrix(pool, shrunk_values)
+    mu = mat.mean(axis=0)
+    sd = mat.std(axis=0, ddof=0)
+    sd = np.where(sd <= 1e-12, 1.0, sd)
+
+    pid = str(player["player_id"])
+    player_row = np.array(
+        [shrunk_values[pid][key] for key in RATING_METRIC_KEYS],
+        dtype=float,
+    )
+    player_metric_z = _metric_z_vector(player_row, mu=mu, sd=sd)
+    player_dim_z = _dimension_z_matrix(player_metric_z.reshape(1, -1))[0]
+    composite_z = float(player_dim_z.mean())
+    raw_display = _tanh_display_score(composite_z)
+
+    pool_metric_z = _zscore_columns(mat)
+    pool_dim_z = _dimension_z_matrix(pool_metric_z)
+    q75 = np.percentile(pool_dim_z, 75, axis=0)
+    pareto_dims = int((player_dim_z >= q75).sum())
+
+    combined_metric_z = np.vstack([pool_metric_z, player_metric_z.reshape(1, -1)])
+    combined_dist = _archetype_distances(combined_metric_z)
+    archetype_rank = int(1 + (combined_dist[:-1] < combined_dist[-1]).sum())
+
+    confidence = _rating_confidence(player)
+    adjusted, uncertainty = _apply_rating_confidence(raw_display, confidence)
+
+    pool_fields = _hybrid_rating_fields_for_pool(pool, shrunk_values)
+    pool_adjusted = [
+        float(pool_fields[str(p["player_id"])]["pass_rating"]) * 10.0
+        for p in pool
+        if str(p["player_id"]) in pool_fields
     ]
-    return round(sum(scores) / len(scores), 4) if scores else RATING_SCORE_MID
+    pool_adjusted.append(adjusted)
+    percentile = _value_percentile_in_pool(adjusted, pool_adjusted)
+
+    return {
+        "pass_rating": round(adjusted / 10.0, 4),
+        "rating_raw_display": round(raw_display, 2),
+        "rating_percentile": round(percentile, 4),
+        "rating_confidence": round(confidence, 4),
+        "rating_uncertainty": round(uncertainty, 2),
+        "rating_pareto_dims": pareto_dims,
+        "rating_pareto_badge": pareto_dims >= RATING_PARETO_MIN_DIMENSIONS,
+        "rating_archetype_rank": archetype_rank,
+        "rating_archetype_badge": archetype_rank <= RATING_ARCHETYPE_TOP_N,
+        "rating_composite_z": round(composite_z, 4),
+    }
 
 
 def _metric_ranks_for_pool(
@@ -1376,12 +1569,12 @@ def rate_player_vs_eligible_pool(player: dict, eligible_pool: list[dict]) -> dic
     player_shrunk_values = {str(player["player_id"]): player_shrunk}
     merged_shrunk = {**shrunk_values, **player_shrunk_values}
     player_for_rating = {**player, **player_shrunk}
-    pass_rating = _pass_rating_from_dimensions(
+    hybrid_fields = _hybrid_rating_fields_for_player(
+        player_for_rating,
         eligible_pool,
         merged_shrunk,
-        player_for_rating,
-        pool_size,
     )
+    pass_rating = float(hybrid_fields["pass_rating"])
 
     section_ratings: dict[str, float] = {}
     section_rating_ranks: dict[str, dict] = {}
@@ -1411,7 +1604,7 @@ def rate_player_vs_eligible_pool(player: dict, eligible_pool: list[dict]) -> dic
 
     return {
         **player,
-        "pass_rating": pass_rating,
+        **hybrid_fields,
         "rating_is_solo": False,
         "rating_is_compared": True,
         "metric_ranks": player_metric_ranks,
@@ -1429,7 +1622,9 @@ def _rate_single_player(player: dict) -> dict[str, object]:
             "total": 1,
             "value": player.get(key),
         }
-    pass_rating = RATING_SCORE_MID
+    confidence = _rating_confidence(player)
+    adjusted, uncertainty = _apply_rating_confidence(RATING_DISPLAY_MID, confidence)
+    pass_rating = round(adjusted / 10.0, 4)
     section_ratings: dict[str, float] = {}
     section_rating_ranks: dict[str, dict] = {}
     for section_key, keys in SECTION_RATING_GROUPS.items():
@@ -1446,6 +1641,15 @@ def _rate_single_player(player: dict) -> dict[str, object]:
     }
     return {
         "pass_rating": pass_rating,
+        "rating_raw_display": RATING_DISPLAY_MID,
+        "rating_percentile": 0.5,
+        "rating_confidence": round(confidence, 4),
+        "rating_uncertainty": round(uncertainty, 2),
+        "rating_pareto_dims": 0,
+        "rating_pareto_badge": False,
+        "rating_archetype_rank": None,
+        "rating_archetype_badge": False,
+        "rating_composite_z": 0.0,
         "rating_is_solo": True,
         "metric_ranks": metric_ranks,
         "section_ratings": section_ratings,
@@ -1461,12 +1665,13 @@ def _rate_position_pool(pos_players: list[dict]) -> list[dict]:
     metric_ranks = _metric_ranks_for_pool(pos_players, shrunk_values)
     section_scores = _section_ratings_for_pool(pos_players, pool_size, shrunk_values)
     section_rating_ranks = _section_rating_ranks_for_pool(section_scores, pool_size)
+    hybrid_fields = _hybrid_rating_fields_for_pool(pos_players, shrunk_values)
     pool_entries: list[dict] = []
     for player in pos_players:
-        pass_rating = _pass_rating_from_dimensions(pos_players, shrunk_values, player, pool_size)
+        pid = str(player["player_id"])
         pool_entries.append({
             **player,
-            "pass_rating": pass_rating,
+            **hybrid_fields.get(pid, {}),
             "rating_is_solo": False,
             "metric_ranks": dict(metric_ranks.get(player["player_id"], {})),
             "section_ratings": {
