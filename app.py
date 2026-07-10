@@ -112,23 +112,34 @@ def _low_sample_tooltip(player: dict) -> str:
     return f"Jogou {minutes} min e {passes} passes. Nota ajustada para amostra pequena."
 
 
-def _rating_sample_warning_html(player: dict) -> str:
+def _rating_sample_warning_html(player: dict, *, soft: bool = False) -> str:
     if not _is_low_sample_rating(player):
         return ""
     tip = html.escape(_low_sample_tooltip(player))
+    if soft:
+        icon = '<span class="rating-warning rating-warning-soft">?</span>'
+    else:
+        icon = '<span class="rating-warning">⚠</span>'
     return (
         '<span class="rating-warning-tip rating-sample-tip">'
-        '<span class="rating-warning">⚠</span>'
+        f"{icon}"
         f'<span class="rating-tipbox">{tip}</span>'
         "</span>"
     )
 
 
-def _rating_score_html(player: dict) -> str:
+def _rating_score_value_html(player: dict) -> str:
     rating_val = player.get("pass_rating")
     if rating_val is None:
         return "—"
-    return f'{html.escape(fmt_rating_score(rating_val))}{_rating_sample_warning_html(player)}'
+    return html.escape(fmt_rating_score(rating_val))
+
+
+def _rating_score_html(player: dict, *, soft_warning: bool = False) -> str:
+    return (
+        f"{_rating_score_value_html(player)}"
+        f"{_rating_sample_warning_html(player, soft=soft_warning)}"
+    )
 
 
 def fmt_rating_percentile(player: dict) -> str:
@@ -144,14 +155,14 @@ def _rating_badges_html(player: dict) -> str:
         badges.append(
             '<span class="rating-badge-tip">'
             '<span class="rating-achievement-dot pareto"></span>'
-            '<span class="rating-tipbox">Forte em várias frentes do passe no grupo.</span>'
+            '<span class="rating-tipbox">Versátil</span>'
             "</span>"
         )
     if player.get("rating_archetype_badge"):
         badges.append(
             '<span class="rating-badge-tip">'
             '<span class="rating-achievement-dot archetype"></span>'
-            '<span class="rating-tipbox">Perfil completo — equilibra bem as áreas do passe.</span>'
+            '<span class="rating-tipbox">Completo</span>'
             "</span>"
         )
     if not badges:
@@ -209,19 +220,21 @@ st.markdown(
         gap: 0.28rem;
         min-width: 0;
     }
-    .rating-pct {
-        font-size: 0.78rem;
-        font-weight: 600;
-        color: #94a3b8;
-        letter-spacing: 0.02em;
-    }
     .rating-box-low-sample {
         border-style: dashed !important;
         border-width: 2px !important;
         border-color: rgba(251, 191, 36, 0.72) !important;
     }
-    .rating-sample-tip {
-        margin-left: 0.28rem;
+    .rating-box-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .rating-warning-soft {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #64748b;
+        opacity: 0.72;
     }
     .rating-cell-wrap {
         display: inline-flex;
@@ -905,7 +918,7 @@ st.markdown(
 
 st.title(f"{APP_NAME} · {APP_LEAGUE}")
 
-RATING_COLUMNS = ["Jogador", "Time", "Nota", "Pct", ""]
+RATING_COLUMNS = ["Jogador", "Time", "Nota", ""]
 SELECTBOX_KEY = "map_player_select"
 
 
@@ -1082,8 +1095,7 @@ def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None)
     body = []
     for row in rows:
         pid = html.escape(str(row["player_id"]))
-        rating_txt = _rating_score_html(row)
-        pct_txt = html.escape(fmt_rating_percentile(row))
+        rating_txt = _rating_score_html(row, soft_warning=True)
         badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
         body.append(
@@ -1091,7 +1103,6 @@ def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None)
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
             f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
-            f'<td class="pct">{pct_txt}</td>'
             f'<td class="badges">{badges}</td>'
             "</tr>"
         )
@@ -1124,6 +1135,7 @@ _RANKING_EMBED_CSS = """
 .rating{font-weight:700;color:#dbeafe;text-align:right;white-space:nowrap}
 .rating-cell-wrap{display:inline-flex;align-items:center;justify-content:flex-end;gap:0.2rem;white-space:nowrap}
 .rating-warning{font-size:1rem;line-height:1;cursor:help;color:#fbbf24}
+.rating-warning-soft{font-size:0.78rem;font-weight:600;color:#64748b;opacity:0.72}
 .rating-warning-tip{position:relative;display:inline-flex;align-items:center}
 .rating-tipbox{display:none;position:absolute;z-index:100;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);
   background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.72rem;font-weight:500;
@@ -1134,7 +1146,6 @@ _RANKING_EMBED_CSS = """
 .rating-achievement-dot.pareto{background:#38bdf8}
 .rating-achievement-dot.archetype{background:#a78bfa}
 .rating-badge-tip:hover .rating-tipbox{display:block}
-.pct{font-weight:600;color:#94a3b8;text-align:right;font-size:0.8rem}
 .badges{text-align:right;white-space:nowrap}
 """
 
@@ -1256,8 +1267,7 @@ def render_rating_table(
     body = []
     for row in rows:
         pid = html.escape(str(row["player_id"]))
-        rating_txt = _rating_score_html(row)
-        pct_txt = html.escape(fmt_rating_percentile(row))
+        rating_txt = _rating_score_html(row, soft_warning=True)
         badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
         body.append(
@@ -1265,7 +1275,6 @@ def render_rating_table(
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
             f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
-            f'<td class="pct">{pct_txt}</td>'
             f'<td class="badges">{badges}</td>'
             "</tr>"
         )
@@ -1471,10 +1480,11 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     rating_val = player.get("pass_rating")
     rating_info = metric_ranks.get("pass_rating")
     is_solo = bool(player.get("rating_is_solo"))
-    pct_txt = fmt_rating_percentile(player)
     badges = _rating_badges_html(player)
     low_sample = _is_low_sample_rating(player)
     low_cls = " rating-box-low-sample" if low_sample and rating_val is not None else ""
+    score_inner = _rating_score_value_html(player)
+    sample_warning = _rating_sample_warning_html(player)
 
     if rating_info and rating_val is not None:
         r_color = rating_value_color(rating_val)
@@ -1483,25 +1493,30 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
         conf = player.get("rating_confidence")
         if conf is not None:
             rank_txt += f" · conf. {int(round(float(conf) * 100))}%"
-        rank_txt += f" · {pct_txt}"
         if is_solo:
             rank_txt += " · individual"
         elif player.get("rating_is_compared"):
             rank_txt += " · vs aptos"
         rating_box = (
             f'<span class="rating-tip">'
+            f'<span class="rating-box-wrap">'
             f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
-            f"{_rating_score_html(player)}</div>"
+            f"{score_inner}</div>"
+            f"{sample_warning}"
+            f"</span>"
             f'<span class="rating-tipbox">{html.escape(rank_txt)}</span>'
             f"</span>"
         )
     else:
         rating_box = (
+            f'<span class="rating-box-wrap">'
             f'<div class="rating-box{low_cls}" style="background:#334155;color:#f8fafc;margin-bottom:0">'
-            f"{_rating_score_html(player)}</div>"
+            f"{score_inner}</div>"
+            f"{sample_warning}"
+            f"</span>"
         )
 
-    meta = f'<div class="rating-meta"><span class="rating-pct">{html.escape(pct_txt)} no pool</span>{badges}</div>'
+    meta = f'<div class="rating-meta">{badges}</div>' if badges else ""
     warnings = _rating_warnings_html(player)
     return f'<div class="rating-row">{rating_box}{meta}{warnings}</div>'
 
@@ -1723,18 +1738,6 @@ def render_map_section(
 
 
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
-    st.markdown(
-        '<div class="pres-card"><h4>Ranking por grupo de posição</h4>'
-        "<p>Nota = 6 + 1,8·tanh(z<sub>composto</sub>/1,2), com shrinkage bayesiano nas 6 dimensões "
-        "(40% volume · 60% eficiência). Com poucos minutos ou passes, a nota é puxada para 6 "
-        "e aparece <strong>⚠</strong> (passe o mouse para ver o motivo). "
-        "No dashboard, a nota fica com <strong>borda tracejada</strong>; no seletor, o nome em itálico. "
-        "<strong>Pct</strong> = percentil no pool. "
-        "Bolinhas coloridas = destaques (passe o mouse). "
-        f"Elegível: minutos e passes ≥ P25 do grupo (referência P{RATING_ELIGIBILITY_PERCENTILE}). "
-        "Clique em um jogador para abrir no Dashboard.</p></div>",
-        unsafe_allow_html=True,
-    )
     render_rating_board(_rating_groups_from_rated(rated), selected_player_id=selected_player_id)
 
 
