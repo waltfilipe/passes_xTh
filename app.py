@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import inspect
+import json
 import sys
 import unicodedata
 from pathlib import Path
@@ -82,6 +83,8 @@ rank_to_display_score = pe.rank_to_display_score
 score_display_color = pe.score_display_color
 rate_player_vs_eligible_pool = pe.rate_player_vs_eligible_pool
 enrich_player_eligibility = pe.enrich_player_eligibility
+RATING_CONFIDENCE_MINUTES = pe.RATING_CONFIDENCE_MINUTES
+RATING_CONFIDENCE_PASSES = pe.RATING_CONFIDENCE_PASSES
 
 
 def fmt_rating_score(pass_rating) -> str:
@@ -90,15 +93,42 @@ def fmt_rating_score(pass_rating) -> str:
     return f"{float(pass_rating) * 10.0:.1f}"
 
 
-def fmt_rating_with_uncertainty(player: dict) -> str:
+def _rating_confidence_value(player: dict) -> float:
+    conf = player.get("rating_confidence")
+    if conf is not None:
+        return float(conf)
+    minutes = float(player.get("minutes") or 0)
+    passes = float(player.get("passes_completed") or 0)
+    return min(1.0, minutes / RATING_CONFIDENCE_MINUTES) * min(1.0, passes / RATING_CONFIDENCE_PASSES)
+
+
+def _is_low_sample_rating(player: dict) -> bool:
+    return _rating_confidence_value(player) < 0.999
+
+
+def _low_sample_tooltip(player: dict) -> str:
+    minutes = int(round(float(player.get("minutes") or 0)))
+    passes = int(round(float(player.get("passes_completed") or 0)))
+    return f"Jogou {minutes} min e {passes} passes. Nota ajustada para amostra pequena."
+
+
+def _rating_sample_warning_html(player: dict) -> str:
+    if not _is_low_sample_rating(player):
+        return ""
+    tip = html.escape(_low_sample_tooltip(player))
+    return (
+        '<span class="rating-warning-tip rating-sample-tip">'
+        '<span class="rating-warning">⚠</span>'
+        f'<span class="rating-tipbox">{tip}</span>'
+        "</span>"
+    )
+
+
+def _rating_score_html(player: dict) -> str:
     rating_val = player.get("pass_rating")
     if rating_val is None:
         return "—"
-    main = fmt_rating_score(rating_val)
-    unc = player.get("rating_uncertainty")
-    if unc is not None and float(unc) > 0.05:
-        return f'{main}<span class="rating-unc">±{float(unc):.1f}</span>'
-    return main
+    return f'{html.escape(fmt_rating_score(rating_val))}{_rating_sample_warning_html(player)}'
 
 
 def fmt_rating_percentile(player: dict) -> str:
@@ -111,17 +141,18 @@ def fmt_rating_percentile(player: dict) -> str:
 def _rating_badges_html(player: dict) -> str:
     badges: list[str] = []
     if player.get("rating_pareto_badge"):
-        dims = int(player.get("rating_pareto_dims") or 0)
         badges.append(
-            f'<span class="rating-achievement-badge pareto" title="Top quartil em {dims} dimensões">'
-            f"Pareto</span>"
+            '<span class="rating-badge-tip">'
+            '<span class="rating-achievement-dot pareto"></span>'
+            '<span class="rating-tipbox">Forte em várias frentes do passe no grupo.</span>'
+            "</span>"
         )
     if player.get("rating_archetype_badge"):
-        rank = player.get("rating_archetype_rank")
-        tip = f"Top {rank} em perfil completo" if rank is not None else "Perfil completo (Arquétipo)"
         badges.append(
-            f'<span class="rating-achievement-badge archetype" title="{html.escape(str(tip))}">'
-            f"Arquétipo</span>"
+            '<span class="rating-badge-tip">'
+            '<span class="rating-achievement-dot archetype"></span>'
+            '<span class="rating-tipbox">Perfil completo — equilibra bem as áreas do passe.</span>'
+            "</span>"
         )
     if not badges:
         return ""
@@ -184,38 +215,55 @@ st.markdown(
         color: #94a3b8;
         letter-spacing: 0.02em;
     }
-    .rating-unc {
-        font-size: 0.72rem;
-        font-weight: 700;
-        opacity: 0.88;
-        margin-left: 0.12rem;
+    .rating-box-low-sample {
+        border-style: dashed !important;
+        border-width: 2px !important;
+        border-color: rgba(251, 191, 36, 0.72) !important;
+    }
+    .rating-sample-tip {
+        margin-left: 0.28rem;
+    }
+    .rating-cell-wrap {
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.2rem;
+        white-space: nowrap;
     }
     .rating-badge-row {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.28rem;
+        gap: 0.35rem;
+        align-items: center;
     }
-    .rating-achievement-badge {
+    .rating-badge-tip {
+        position: relative;
         display: inline-flex;
         align-items: center;
-        padding: 0.12rem 0.42rem;
+        cursor: help;
+    }
+    .rating-achievement-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
         border-radius: 999px;
-        font-size: 0.62rem;
-        font-weight: 700;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        border: 1px solid transparent;
-        white-space: nowrap;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,0.28);
+        box-shadow: 0 0 0 1px rgba(0,0,0,0.18);
     }
-    .rating-achievement-badge.pareto {
-        background: rgba(56, 189, 248, 0.16);
-        color: #7dd3fc;
-        border-color: rgba(56, 189, 248, 0.35);
+    .rating-achievement-dot.pareto {
+        background: #38bdf8;
     }
-    .rating-achievement-badge.archetype {
-        background: rgba(167, 139, 250, 0.16);
-        color: #c4b5fd;
-        border-color: rgba(167, 139, 250, 0.35);
+    .rating-achievement-dot.archetype {
+        background: #a78bfa;
+    }
+    .rating-badge-tip:hover .rating-tipbox {
+        display: block;
+        white-space: normal;
+        max-width: 220px;
+        text-align: left;
+        font-weight: 500;
+        line-height: 1.35;
     }
     .rating-warning-tip {
         position: relative;
@@ -297,6 +345,7 @@ st.markdown(
     .rating-tip:hover .rating-tipbox,
     .section-rating-tip:hover .rating-tipbox,
     .rating-warning-tip:hover .rating-tipbox,
+    .rating-badge-tip:hover .rating-tipbox,
     .metric-tip:hover .metric-tipbox {
         display: block;
     }
@@ -976,29 +1025,64 @@ def rating_value_color(pass_rating: float | None) -> str:
     return score_display_color(float(pass_rating) * 10.0)
 
 
-def _player_options(rated: list[dict]) -> list[tuple[str, str, str, str]]:
-    rows = sorted(
-        {(p["player_id"], p["player_name"], p.get("team", "—")) for p in rated},
-        key=lambda x: _norm(x[1]),
+def _player_options(players: list[dict]) -> list[tuple[str, str, str, str, bool]]:
+    by_id: dict[str, dict] = {}
+    for player in players:
+        by_id[str(player["player_id"])] = player
+    rows = sorted(by_id.values(), key=lambda p: _norm(p["player_name"]))
+    return [
+        (
+            str(p["player_id"]),
+            p["player_name"],
+            p.get("team", "—"),
+            f"{p['player_name']} ({p.get('team', '—')})",
+            _is_low_sample_rating(p),
+        )
+        for p in rows
+    ]
+
+
+def _inject_selectbox_italic_labels(low_sample_labels: list[str]) -> None:
+    if not low_sample_labels:
+        return
+    labels_json = json.dumps(low_sample_labels, ensure_ascii=False)
+    components.html(
+        f"""<script>
+        (function() {{
+            const labels = new Set({labels_json});
+            const doc = window.parent.document;
+            function styleNode(el) {{
+                const text = (el.textContent || "").trim();
+                if (labels.has(text)) {{
+                    el.style.fontStyle = "italic";
+                }}
+            }}
+            function apply() {{
+                doc.querySelectorAll('[data-baseweb="select"] [role="option"], [data-baseweb="menu"] [role="option"]').forEach(styleNode);
+                doc.querySelectorAll('[data-baseweb="select"] [class*="singleValue"], [data-baseweb="select"] [class*="valueContainer"] div').forEach(styleNode);
+            }}
+            apply();
+            new MutationObserver(apply).observe(doc.body, {{childList: true, subtree: true}});
+        }})();
+        </script>""",
+        height=0,
     )
-    return [(pid, name, team, f"{name} ({team})") for pid, name, team in rows]
 
 
 def _sync_player_selection(
     players_by_id: dict[str, dict],
-    label_by_id: dict[str, str],
 ) -> None:
     qp = st.query_params.get("player_id")
     if qp and qp in players_by_id:
         st.session_state["map_player_id"] = qp
-        st.session_state[SELECTBOX_KEY] = label_by_id[qp]
+        st.session_state[SELECTBOX_KEY] = qp
 
 
 def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None) -> str:
     body = []
     for row in rows:
         pid = html.escape(str(row["player_id"]))
-        rating_txt = fmt_rating_with_uncertainty(row)
+        rating_txt = _rating_score_html(row)
         pct_txt = html.escape(fmt_rating_percentile(row))
         badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
@@ -1006,7 +1090,7 @@ def _rating_table_rows_html(rows: list[dict], *, selected_player_id: str | None)
             f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
-            f'<td class="rating">{rating_txt}</td>'
+            f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
             f'<td class="pct">{pct_txt}</td>'
             f'<td class="badges">{badges}</td>'
             "</tr>"
@@ -1038,6 +1122,18 @@ _RANKING_EMBED_CSS = """
 .rx tr:last-child td{border-bottom:none}
 .team{color:#9fb0c7;font-size:0.8rem}
 .rating{font-weight:700;color:#dbeafe;text-align:right;white-space:nowrap}
+.rating-cell-wrap{display:inline-flex;align-items:center;justify-content:flex-end;gap:0.2rem;white-space:nowrap}
+.rating-warning{font-size:1rem;line-height:1;cursor:help;color:#fbbf24}
+.rating-warning-tip{position:relative;display:inline-flex;align-items:center}
+.rating-tipbox{display:none;position:absolute;z-index:100;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);
+  background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.72rem;font-weight:500;
+  color:#e2e8f0;white-space:normal;max-width:220px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.4);pointer-events:none}
+.rating-warning-tip:hover .rating-tipbox{display:block}
+.rating-badge-tip{position:relative;display:inline-flex;align-items:center;cursor:help}
+.rating-achievement-dot{display:inline-block;width:10px;height:10px;border-radius:999px;border:1px solid rgba(255,255,255,0.28)}
+.rating-achievement-dot.pareto{background:#38bdf8}
+.rating-achievement-dot.archetype{background:#a78bfa}
+.rating-badge-tip:hover .rating-tipbox{display:block}
 .pct{font-weight:600;color:#94a3b8;text-align:right;font-size:0.8rem}
 .badges{text-align:right;white-space:nowrap}
 """
@@ -1091,6 +1187,9 @@ def _rating_groups_from_rated(rated: list[dict]) -> list[tuple[str, list[dict]]]
                 "Jogador": p["player_name"],
                 "Time": p["team"],
                 "pass_rating": p.get("pass_rating"),
+                "minutes": p.get("minutes"),
+                "passes_completed": p.get("passes_completed"),
+                "rating_confidence": p.get("rating_confidence"),
                 "rating_percentile": p.get("rating_percentile"),
                 "rating_uncertainty": p.get("rating_uncertainty"),
                 "rating_pareto_badge": p.get("rating_pareto_badge"),
@@ -1157,7 +1256,7 @@ def render_rating_table(
     body = []
     for row in rows:
         pid = html.escape(str(row["player_id"]))
-        rating_txt = fmt_rating_with_uncertainty(row)
+        rating_txt = _rating_score_html(row)
         pct_txt = html.escape(fmt_rating_percentile(row))
         badges = _rating_badges_html(row)
         sel = " sel" if selected_player_id and str(row["player_id"]) == str(selected_player_id) else ""
@@ -1165,7 +1264,7 @@ def render_rating_table(
             f'<tr class="row{sel}" data-pid="{pid}" onclick="pickPlayer(\'{pid}\')">'
             f"<td>{html.escape(str(row['Jogador']))}</td>"
             f"<td class='team'>{html.escape(str(row['Time']))}</td>"
-            f'<td class="rating">{rating_txt}</td>'
+            f'<td class="rating"><span class="rating-cell-wrap">{rating_txt}</span></td>'
             f'<td class="pct">{pct_txt}</td>'
             f'<td class="badges">{badges}</td>'
             "</tr>"
@@ -1370,11 +1469,12 @@ def _build_sections_html(
 
 def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     rating_val = player.get("pass_rating")
-    rating_txt = fmt_rating_with_uncertainty(player) if rating_val is not None else "—"
     rating_info = metric_ranks.get("pass_rating")
     is_solo = bool(player.get("rating_is_solo"))
     pct_txt = fmt_rating_percentile(player)
     badges = _rating_badges_html(player)
+    low_sample = _is_low_sample_rating(player)
+    low_cls = " rating-box-low-sample" if low_sample and rating_val is not None else ""
 
     if rating_info and rating_val is not None:
         r_color = rating_value_color(rating_val)
@@ -1390,15 +1490,15 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
             rank_txt += " · vs aptos"
         rating_box = (
             f'<span class="rating-tip">'
-            f'<div class="rating-box" style="background:{r_color};color:{r_txt};margin-bottom:0">'
-            f"{rating_txt}</div>"
+            f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
+            f"{_rating_score_html(player)}</div>"
             f'<span class="rating-tipbox">{html.escape(rank_txt)}</span>'
             f"</span>"
         )
     else:
         rating_box = (
-            f'<div class="rating-box" style="background:#334155;color:#f8fafc;margin-bottom:0">'
-            f"{rating_txt}</div>"
+            f'<div class="rating-box{low_cls}" style="background:#334155;color:#f8fafc;margin-bottom:0">'
+            f"{_rating_score_html(player)}</div>"
         )
 
     meta = f'<div class="rating-meta"><span class="rating-pct">{html.escape(pct_txt)} no pool</span>{badges}</div>'
@@ -1587,29 +1687,31 @@ def render_map_section(
 ) -> None:
     st.caption("Selecione abaixo ou clique em um jogador na aba Ranking.")
 
-    options = _player_options(all_players)
+    options = _player_options(list(players_by_id.values()))
     if not options:
         st.info("Nenhum jogador com passes para o mapa.")
         return
 
-    labels = [o[3] for o in options]
-    id_by_label = {o[3]: o[0] for o in options}
+    player_ids = [o[0] for o in options]
     label_by_id = {o[0]: o[3] for o in options}
+    low_sample_labels = [o[3] for o in options if o[4]]
 
-    _sync_player_selection(players_by_id, label_by_id)
+    _sync_player_selection(players_by_id)
 
-    selected_label = st.selectbox(
+    selected_id = st.selectbox(
         "Jogador",
-        options=labels,
+        options=player_ids,
+        format_func=lambda pid: label_by_id[pid],
         key=SELECTBOX_KEY,
         placeholder="Selecione um jogador",
     )
+    _inject_selectbox_italic_labels(low_sample_labels)
 
-    if not selected_label:
+    if not selected_id:
         st.info("Selecione um jogador na lista ou na aba Ranking.")
         return
 
-    player_id = id_by_label[selected_label]
+    player_id = selected_id
     st.session_state["map_player_id"] = player_id
     player = dict(players_by_id[player_id])
     if not player.get("eligible_for_rating"):
@@ -1624,11 +1726,11 @@ def render_rating_section(rated: list[dict], *, selected_player_id: str | None) 
     st.markdown(
         '<div class="pres-card"><h4>Ranking por grupo de posição</h4>'
         "<p>Nota = 6 + 1,8·tanh(z<sub>composto</sub>/1,2), com shrinkage bayesiano nas 6 dimensões "
-        "(40% volume · 60% eficiência). Incerteza ± puxa a nota para 6 quando a amostra é pequena "
-        "(confiança = minutos/900 × passes/400). "
+        "(40% volume · 60% eficiência). Com poucos minutos ou passes, a nota é puxada para 6 "
+        "e aparece <strong>⚠</strong> (passe o mouse para ver o motivo). "
+        "No dashboard, a nota fica com <strong>borda tracejada</strong>; no seletor, o nome em itálico. "
         "<strong>Pct</strong> = percentil no pool. "
-        "<strong>Pareto</strong> = top quartil em ≥2 dimensões. "
-        "<strong>Arquétipo</strong> = top 5 em perfil completo (distância ao ideal P90). "
+        "Bolinhas coloridas = destaques (passe o mouse). "
         f"Elegível: minutos e passes ≥ P25 do grupo (referência P{RATING_ELIGIBILITY_PERCENTILE}). "
         "Clique em um jogador para abrir no Dashboard.</p></div>",
         unsafe_allow_html=True,
@@ -1808,7 +1910,8 @@ def _render_presentation_blur_demo(player: dict, passes) -> None:
         '<div class="pres-blur-overlay pres-blur-overlay-side">'
         '<div class="pres-blur-caption">'
         "<strong>Cards do jogador</strong>"
-        "<p style='margin-top:0.45rem'>À direita: nota com ± incerteza, percentil, badges e pilares com nota. "
+        "<p style='margin-top:0.45rem'>À direita: nota (⚠ e borda tracejada se amostra pequena), "
+        "percentil, bolinhas de destaque e pilares com nota. "
         "Clique na seta de cada pilar para abrir as métricas detalhadas.</p>"
         "</div></div></div></div>"
     )
@@ -1904,7 +2007,7 @@ def _render_presentation_ranking_demo(groups: list[tuple[str, list[dict]]]) -> N
         '<div class="pres-blur-overlay pres-blur-overlay-side">'
         '<div class="pres-blur-caption">'
         "<strong>Ranking por grupo</strong>"
-        "<p>Nota híbrida (tanh + confiança), percentil no pool e badges Pareto/Arquétipo. "
+        "<p>Nota híbrida com aviso de amostra pequena (⚠), percentil no pool e bolinhas de destaque. "
         "Clique em um jogador para abrir sua análise completa no Dashboard.</p>"
         "</div></div></div>"
     )
@@ -2222,19 +2325,22 @@ def render_similarity_section(
         st.info("Nenhum jogador disponível para similaridade.")
         return
 
-    labels = [o[3] for o in options]
-    id_by_label = {o[3]: o[0] for o in options}
-    selected_label = st.selectbox(
+    player_ids = [o[0] for o in options]
+    label_by_id = {o[0]: o[3] for o in options}
+    low_sample_labels = [o[3] for o in options if o[4]]
+    selected_id = st.selectbox(
         select_label,
-        options=labels,
+        options=player_ids,
+        format_func=lambda pid: label_by_id[pid],
         key=select_key,
         placeholder="Selecione um jogador",
     )
-    if not selected_label:
+    _inject_selectbox_italic_labels(low_sample_labels)
+    if not selected_id:
         st.info("Selecione um jogador para ver os similares.")
         return
 
-    target_id = id_by_label[selected_label]
+    target_id = selected_id
     search_pos = sim.player_search_position(
         players_sb_by_id[target_id] if sb_to_sa else players_sa_by_id[target_id]
     )
