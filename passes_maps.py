@@ -379,8 +379,8 @@ def draw_pass_origin_heatmap(
     cols = max(int(cols), 1)
     rows = max(int(rows), 1)
     if compare:
-        figsize = (5.4, 3.6)
-        dpi = 180
+        figsize = (3.6, 2.4)
+        dpi = 160
     elif tiny:
         figsize = (2.2, 1.45)
         dpi = 120

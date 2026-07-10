@@ -588,7 +588,7 @@ st.markdown(
     .cmp-section-title:first-child { border-top: none; margin-top: 0; padding-top: 0; }
     .cmp-row {
         display: grid;
-        grid-template-columns: 1.1fr 1fr 1fr;
+        grid-template-columns: 1.1fr 0.85fr 0.7fr 0.85fr;
         gap: 0.75rem;
         align-items: end;
         padding: 0.45rem 0;
@@ -1052,6 +1052,16 @@ st.markdown(
     .cmp-delta.up { color: #34d399; }
     .cmp-delta.down { color: #f87171; }
     .cmp-delta.flat { color: #475569; }
+    .cmp-delta-cell { text-align: center; }
+    .cmp-delta-center {
+        display: inline-block;
+        font-size: 0.82rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .cmp-delta-center.up { color: #34d399; }
+    .cmp-delta-center.down { color: #f87171; }
+    .cmp-delta-center.flat { color: #64748b; }
     .cmp-value-wrap { display: inline-flex; align-items: center; }
     .stat-section-row {
         display: flex;
@@ -1796,22 +1806,21 @@ def _section_grade_body_html(player: dict, keys: tuple[str, ...]) -> str:
     )
 
 
-def _cmp_delta_html(target_val: float | None, similar_val: float | None) -> tuple[str, str]:
+def _cmp_vs_reference_delta_html(target_val: float | None, similar_val: float | None) -> str:
+    """Delta do similar em relação à referência (similar − referência)."""
     if target_val is None or similar_val is None:
-        return "", ""
-    t = float(target_val)
-    s = float(similar_val)
-    if abs(t - s) < 0.05:
-        dot = '<span class="cmp-delta flat" title="Empate">●</span>'
-        return dot, dot
-    if t > s:
+        return '<span class="cmp-delta-center flat">—</span>'
+    diff = float(similar_val) - float(target_val)
+    if abs(diff) < 0.05:
+        return '<span class="cmp-delta-center flat">0%</span>'
+    if diff > 0:
         return (
-            '<span class="cmp-delta up" title="Acima do similar">▲</span>',
-            '<span class="cmp-delta down" title="Abaixo da referência">▼</span>',
+            f'<span class="cmp-delta-center up" title="Acima da referência">'
+            f"+{diff:.0f}%</span>"
         )
     return (
-        '<span class="cmp-delta down" title="Abaixo do similar">▼</span>',
-        '<span class="cmp-delta up" title="Acima da referência">▲</span>',
+        f'<span class="cmp-delta-center down" title="Abaixo da referência">'
+        f"{diff:.0f}%</span>"
     )
 
 
@@ -1916,6 +1925,7 @@ def _comparison_metrics_html(
         '<div class="cmp-row cmp-row-head">',
         "<span>Métrica</span>",
         f"<span>{html.escape(target_league)}</span>",
+        "<span>Δ</span>",
         f"<span>{html.escape(similar_league)}</span>",
         "</div>",
     ]
@@ -1923,20 +1933,17 @@ def _comparison_metrics_html(
         rows.append(f'<div class="cmp-section-title">{html.escape(section_name)}</div>')
         for key in section_keys:
             label = _metric_label_html(key)
-            t_delta, s_delta = _cmp_delta_html(target_pct.get(key), similar_pct.get(key))
+            delta_html = _cmp_vs_reference_delta_html(
+                target_pct.get(key), similar_pct.get(key),
+            )
             t_val = html.escape(sim.fmt_percentile_value(target_pct.get(key)))
             s_val = html.escape(sim.fmt_percentile_value(similar_pct.get(key)))
             rows.extend([
                 '<div class="cmp-row">',
                 f'<span class="cmp-cell-label">{label}</span>',
-                (
-                    f'<span><span class="cmp-value-wrap">'
-                    f'<span class="cmp-cell-value">{t_val}</span>{t_delta}</span></span>'
-                ),
-                (
-                    f'<span><span class="cmp-value-wrap">'
-                    f'<span class="cmp-cell-value">{s_val}</span>{s_delta}</span></span>'
-                ),
+                f'<span class="cmp-cell-value">{t_val}</span>',
+                f'<span class="cmp-delta-cell">{delta_html}</span>',
+                f'<span class="cmp-cell-value">{s_val}</span>',
                 "</div>",
             ])
     rows.append("</div>")
@@ -1952,35 +1959,37 @@ def _render_comparison_maps_row(
     target_league: str,
     similar_league: str,
 ) -> None:
-    m1, m2 = st.columns(2, gap="small")
+    _pad_l, maps_col, _pad_r = st.columns([1, 4, 1])
     name_t = str(target.get("player_name", "—"))
     name_s = str(similar.get("player_name", "—"))
-    with m1:
-        if target_passes is not None and not target_passes.empty:
-            fig = draw_pass_origin_heatmap(
-                target_passes,
-                name_t,
-                str(target.get("team", "—")),
-                cols=sim.ORIGIN_ANALYSIS_COLS,
-                rows=sim.ORIGIN_ANALYSIS_ROWS,
-                compare=True,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        else:
-            st.caption("Sem passes.")
-    with m2:
-        if similar_passes is not None and not similar_passes.empty:
-            fig = draw_pass_origin_heatmap(
-                similar_passes,
-                name_s,
-                str(similar.get("team", "—")),
-                cols=sim.ORIGIN_ANALYSIS_COLS,
-                rows=sim.ORIGIN_ANALYSIS_ROWS,
-                compare=True,
-            )
-            st.pyplot(fig, clear_figure=True, use_container_width=True)
-        else:
-            st.caption("Sem passes.")
+    with maps_col:
+        m1, m2 = st.columns(2, gap="small")
+        with m1:
+            if target_passes is not None and not target_passes.empty:
+                fig = draw_pass_origin_heatmap(
+                    target_passes,
+                    name_t,
+                    str(target.get("team", "—")),
+                    cols=sim.ORIGIN_ANALYSIS_COLS,
+                    rows=sim.ORIGIN_ANALYSIS_ROWS,
+                    compare=True,
+                )
+                st.pyplot(fig, clear_figure=True, use_container_width=True)
+            else:
+                st.caption("Sem passes.")
+        with m2:
+            if similar_passes is not None and not similar_passes.empty:
+                fig = draw_pass_origin_heatmap(
+                    similar_passes,
+                    name_s,
+                    str(similar.get("team", "—")),
+                    cols=sim.ORIGIN_ANALYSIS_COLS,
+                    rows=sim.ORIGIN_ANALYSIS_ROWS,
+                    compare=True,
+                )
+                st.pyplot(fig, clear_figure=True, use_container_width=True)
+            else:
+                st.caption("Sem passes.")
 
 
 def _fig_to_blurred_b64(fig, *, blur_radius: int = 7) -> str:
@@ -2390,8 +2399,8 @@ def _render_similarity_results_tab(
     st.markdown("#### Comparação")
     st.caption(
         f"Percentis no pool {html.escape(sim.similarity_position_label(target_pos))} · "
-        f"▲ verde = acima · ▼ vermelho = abaixo "
-        f"({html.escape(target_league)} vs {html.escape(similar_league)})."
+        f"Δ = {html.escape(similar_league)} menos {html.escape(target_league)} "
+        f"(referência do slicer) · verde se acima · vermelho se abaixo."
     )
 
     _render_comparison_maps_row(
