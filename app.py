@@ -208,7 +208,7 @@ def _pillar_radar_b64(player: dict) -> str:
     fill_alpha = 0.12 if low_sample else 0.22
 
     fig, ax = plt.subplots(
-        figsize=(2.35, 2.35),
+        figsize=(3.4, 3.4),
         subplot_kw={"polar": True},
         facecolor="none",
     )
@@ -216,26 +216,26 @@ def _pillar_radar_b64(player: dict) -> str:
     ax.set_facecolor("none")
     ax.set_theta_offset(np.pi / 2)
     ax.set_theta_direction(-1)
-    ax.plot(angles_closed, values_closed, color="#60a5fa", linewidth=2.0, alpha=line_alpha)
+    ax.plot(angles_closed, values_closed, color="#60a5fa", linewidth=2.4, alpha=line_alpha)
     ax.fill(angles_closed, values_closed, color="#60a5fa", alpha=fill_alpha)
     ax.set_ylim(4.0, 8.0)
     ax.set_yticks([5, 6, 7])
     ax.set_yticklabels([])
     ax.set_xticks(angles)
-    ax.set_xticklabels(labels, fontsize=7.5, color="#cbd5e1", fontweight=600)
-    ax.tick_params(axis="x", pad=7)
-    ax.grid(color="#334155", alpha=0.5, linewidth=0.65)
+    ax.set_xticklabels(labels, fontsize=9.5, color="#cbd5e1", fontweight=600)
+    ax.tick_params(axis="x", pad=10)
+    ax.grid(color="#334155", alpha=0.5, linewidth=0.7)
     ax.spines["polar"].set_color("#334155")
     ax.spines["polar"].set_alpha(0.55)
     fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, transparent=True, bbox_inches="tight", pad_inches=0.04)
+    fig.savefig(buf, format="png", dpi=200, transparent=True, bbox_inches="tight", pad_inches=0.06)
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def _pillar_radar_html(player: dict) -> str:
+def _pillar_radar_inner_html(player: dict) -> str:
     b64 = _pillar_radar_b64(player)
     if not b64:
         return ""
@@ -243,6 +243,18 @@ def _pillar_radar_html(player: dict) -> str:
         '<span class="rating-radar-wrap" title="Notas dos 5 pilares">'
         f'<img class="rating-radar" src="data:image/png;base64,{b64}" alt="Radar dos pilares">'
         "</span>"
+    )
+
+
+def _pillar_radar_card_html(player: dict) -> str:
+    inner = _pillar_radar_inner_html(player)
+    if not inner:
+        return ""
+    return (
+        '<div class="player-card radar-card">'
+        '<div class="radar-card-title">Perfil por pilar</div>'
+        f'<div class="radar-card-body">{inner}</div>'
+        "</div>"
     )
 
 APP_NAME = "Scout de Passes"
@@ -295,14 +307,36 @@ st.markdown(
         gap: 0.35rem;
         flex-shrink: 0;
     }
-    .player-radar-center {
+    .radar-card {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        padding: 0.95rem 1rem 1.05rem;
+    }
+    .radar-card-title {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #8fa3bf;
+        margin-bottom: 0.55rem;
+    }
+    .radar-card-body {
         display: flex;
         justify-content: center;
-        margin: 0.7rem 0 0.85rem;
+        align-items: center;
+        min-height: 240px;
     }
-    .player-radar-center .rating-radar-wrap {
-        width: 168px;
-        height: 168px;
+    .radar-card .rating-radar-wrap {
+        width: 100%;
+        max-width: 300px;
+        height: 280px;
+    }
+    .radar-card .rating-radar {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
     }
     .player-info-card .header-stat strong { font-size: 0.98rem; }
     .header-stat {
@@ -1639,13 +1673,6 @@ def _player_rating_slot_html(player: dict, metric_ranks: dict) -> str:
     return f'<div class="player-rating-slot">{rating_box}{badges_html}</div>'
 
 
-def _player_radar_row_html(player: dict) -> str:
-    radar = _pillar_radar_html(player)
-    if not radar:
-        return ""
-    return f'<div class="player-radar-center">{radar}</div>'
-
-
 def _section_grade_summary_bits(
     player: dict,
     section_key: str,
@@ -1726,24 +1753,25 @@ def _build_dashboard_sidebar_html(player: dict) -> str:
         f"{html.escape(str(player.get('position', '—')))}"
         f"{_rating_warnings_html(player)}"
     )
-    general_card = (
+    profile_card = (
         '<div class="player-card player-info-card">'
         f"<h3>{html.escape(player['player_name'])}</h3>"
         '<div class="player-meta-rating-row">'
         f'<div class="player-sub-line">{sub_line}</div>'
         f"{_player_rating_slot_html(player, metric_ranks)}"
         "</div>"
-        f"{_player_radar_row_html(player)}"
         + _build_sections_html(player, metric_ranks, general_sections)
         + "</div>"
     )
+    radar_card = _pillar_radar_card_html(player)
     pillar_html = "".join(
-        _section_grade_accordion_html(player, section_key, title, keys, open=(i == 0))
-        for i, (section_key, title, _subtitle, keys) in enumerate(SCOUT_SECTION_SPECS)
+        _section_grade_accordion_html(player, section_key, title, keys, open=False)
+        for section_key, title, _subtitle, keys in SCOUT_SECTION_SPECS
     )
     return (
         '<div class="sidebar-stack dashboard-sidebar-stack">'
-        f"{general_card}"
+        f"{profile_card}"
+        f"{radar_card}"
         f"{pillar_html}"
         "</div>"
     )
