@@ -123,7 +123,7 @@ def _rating_sample_warning_html(player: dict, *, soft: bool = False) -> str:
     return (
         '<span class="rating-warning-tip rating-sample-tip">'
         f"{icon}"
-        f'<span class="rating-tipbox">{tip}</span>'
+        f'<span class="rating-sample-tipbox">{tip}</span>'
         "</span>"
     )
 
@@ -223,7 +223,7 @@ st.markdown(
     .rating-box-low-sample {
         border-style: dashed !important;
         border-width: 2px !important;
-        border-color: rgba(251, 191, 36, 0.72) !important;
+        border-color: rgba(0, 0, 0, 0.72) !important;
     }
     .rating-box-wrap {
         display: inline-flex;
@@ -336,13 +336,9 @@ st.markdown(
         position: relative;
         display: inline-flex;
     }
-    .rank-tipbox, .rating-tipbox {
+    .rank-tipbox, .rating-tipbox, .rating-rank-tipbox, .rating-sample-tipbox {
         display: none;
         position: absolute;
-        z-index: 100;
-        left: 50%;
-        bottom: calc(100% + 6px);
-        transform: translateX(-50%);
         background: #111827;
         border: 1px solid #3d4f6f;
         border-radius: 6px;
@@ -350,14 +346,30 @@ st.markdown(
         font-size: 0.72rem;
         font-weight: 700;
         color: #e2e8f0;
-        white-space: nowrap;
         box-shadow: 0 8px 20px rgba(0,0,0,.4);
         pointer-events: none;
     }
+    .rank-tipbox, .rating-tipbox, .rating-rank-tipbox {
+        z-index: 110;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        white-space: nowrap;
+    }
+    .rating-sample-tipbox {
+        z-index: 111;
+        left: 50%;
+        top: calc(100% + 8px);
+        transform: translateX(-50%);
+        white-space: normal;
+        max-width: 220px;
+        font-weight: 500;
+        line-height: 1.35;
+    }
     .rank-tip:hover .rank-tipbox,
-    .rating-tip:hover .rating-tipbox,
+    .rating-tip:hover .rating-rank-tipbox,
     .section-rating-tip:hover .rating-tipbox,
-    .rating-warning-tip:hover .rating-tipbox,
+    .rating-sample-tip:hover .rating-sample-tipbox,
     .rating-badge-tip:hover .rating-tipbox,
     .metric-tip:hover .metric-tipbox {
         display: block;
@@ -1137,10 +1149,10 @@ _RANKING_EMBED_CSS = """
 .rating-warning{font-size:1rem;line-height:1;cursor:help;color:#fbbf24}
 .rating-warning-soft{font-size:0.78rem;font-weight:600;color:#64748b;opacity:0.72}
 .rating-warning-tip{position:relative;display:inline-flex;align-items:center}
-.rating-tipbox{display:none;position:absolute;z-index:100;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);
+.rating-sample-tipbox{display:none;position:absolute;z-index:111;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
   background:#111827;border:1px solid #3d4f6f;border-radius:6px;padding:4px 8px;font-size:0.72rem;font-weight:500;
   color:#e2e8f0;white-space:normal;max-width:220px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.4);pointer-events:none}
-.rating-warning-tip:hover .rating-tipbox{display:block}
+.rating-sample-tip:hover .rating-sample-tipbox{display:block}
 .rating-badge-tip{position:relative;display:inline-flex;align-items:center;cursor:help}
 .rating-achievement-dot{display:inline-block;width:10px;height:10px;border-radius:999px;border:1px solid rgba(255,255,255,0.28)}
 .rating-achievement-dot.pareto{background:#38bdf8}
@@ -1479,7 +1491,6 @@ def _build_sections_html(
 def _rating_header_html(player: dict, metric_ranks: dict) -> str:
     rating_val = player.get("pass_rating")
     rating_info = metric_ranks.get("pass_rating")
-    is_solo = bool(player.get("rating_is_solo"))
     badges = _rating_badges_html(player)
     low_sample = _is_low_sample_rating(player)
     low_cls = " rating-box-low-sample" if low_sample and rating_val is not None else ""
@@ -1490,21 +1501,14 @@ def _rating_header_html(player: dict, metric_ranks: dict) -> str:
         r_color = rating_value_color(rating_val)
         r_txt = _badge_text_color(r_color)
         rank_txt = f'{int(rating_info["rank"])}/{int(rating_info["total"])}'
-        conf = player.get("rating_confidence")
-        if conf is not None:
-            rank_txt += f" · conf. {int(round(float(conf) * 100))}%"
-        if is_solo:
-            rank_txt += " · individual"
-        elif player.get("rating_is_compared"):
-            rank_txt += " · vs aptos"
         rating_box = (
-            f'<span class="rating-tip">'
             f'<span class="rating-box-wrap">'
+            f'<span class="rating-tip">'
             f'<div class="rating-box{low_cls}" style="background:{r_color};color:{r_txt};margin-bottom:0">'
             f"{score_inner}</div>"
-            f"{sample_warning}"
+            f'<span class="rating-rank-tipbox">{html.escape(rank_txt)}</span>'
             f"</span>"
-            f'<span class="rating-tipbox">{html.escape(rank_txt)}</span>'
+            f"{sample_warning}"
             f"</span>"
         )
     else:
