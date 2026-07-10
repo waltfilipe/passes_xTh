@@ -62,6 +62,7 @@ POSITION_GROUPS_ORDER = pe.POSITION_GROUPS_ORDER
 RATING_TOP_N = pe.RATING_TOP_N
 RATING_MIN_MINUTES_PCT = pe.RATING_MIN_MINUTES_PCT
 RATING_MIN_PASSES_PCT = pe.RATING_MIN_PASSES_PCT
+RATING_ELIGIBILITY_PERCENTILE = getattr(pe, "RATING_ELIGIBILITY_PERCENTILE", 75)
 SIMILARITY_TOP_K = 10
 SIMILARITY_SELECT_SB_KEY = "similarity_player_select_sb"
 SIMILARITY_SELECT_SA_KEY = "similarity_player_select_sa"
@@ -1117,14 +1118,20 @@ function pickPlayer(pid) {{
 def _rating_warnings_html(player: dict) -> str:
     warnings: list[str] = []
     if not player.get("eligible_minutes", True):
-        warnings.append("Menos de 30% dos minutos")
+        min_minutes_pct = player.get("position_min_minutes_pct")
+        if min_minutes_pct is not None:
+            warnings.append(
+                f"Minutos abaixo do P25 do grupo (mín. {fmt_pct(float(min_minutes_pct) * 100.0)})"
+            )
+        else:
+            warnings.append("Minutos insuficientes para elegibilidade")
     if not player.get("eligible_passes", True):
         min_passes = player.get("position_min_passes")
         if min_passes is not None:
             min_txt = fmt_stat_value("passes_completed", min_passes)
-            warnings.append(f"Menos de 30% dos passes da posição (mín. {min_txt})")
+            warnings.append(f"Passes abaixo do P25 do grupo (mín. {min_txt})")
         else:
-            warnings.append("Menos de 30% dos passes da posição")
+            warnings.append("Passes insuficientes para elegibilidade")
     return "".join(
         '<span class="rating-warning-tip">'
         '<span class="rating-warning">⚠</span>'
@@ -1511,9 +1518,10 @@ def render_map_section(
 def render_rating_section(rated: list[dict], *, selected_player_id: str | None) -> None:
     st.markdown(
         '<div class="pres-card"><h4>Ranking por grupo de posição</h4>'
-        "<p>Rating = média das notas por métrica no grupo (1º = 9,0 · mediano = 6,0 · último = 3,0). "
-        f"Elegível: &gt;{int(RATING_MIN_MINUTES_PCT * 100)}% dos minutos e ≥{int(RATING_MIN_PASSES_PCT * 100)}% "
-        "dos passes do grupo. Clique em um jogador para abrir no Dashboard.</p></div>",
+        "<p>Rating = média de 6 dimensões (60% eficiência · 40% volume), com shrinkage e blend rank/percentil. "
+        "Escala: 1º = 9,0 · mediano = 6,0 · último = 3,0. "
+        f"Elegível: minutos e passes ≥ P25 do grupo (referência P{RATING_ELIGIBILITY_PERCENTILE}). "
+        "Clique em um jogador para abrir no Dashboard.</p></div>",
         unsafe_allow_html=True,
     )
     render_rating_board(_rating_groups_from_rated(rated), selected_player_id=selected_player_id)
@@ -1787,7 +1795,7 @@ def _render_presentation_ranking_demo(groups: list[tuple[str, list[dict]]]) -> N
         '<div class="pres-blur-overlay pres-blur-overlay-side">'
         '<div class="pres-blur-caption">'
         "<strong>Ranking por grupo</strong>"
-        "<p>Tabelas por posição com rating (1º = 9,0 · mediano = 6,0). "
+        "<p>Tabelas por posição com rating por dimensões (volume + eficiência). "
         "Clique em um jogador para abrir sua análise completa no Dashboard.</p>"
         "</div></div></div>"
     )
